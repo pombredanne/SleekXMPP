@@ -1,7 +1,7 @@
 """
-    SleekXMPP: The Sleek XMPP Library
-    Copyright (C) 2010  Nathanael C. Fritz
-    This file is part of SleekXMPP.
+	SleekXMPP: The Sleek XMPP Library
+	Copyright (C) 2010  Nathanael C. Fritz
+	This file is part of SleekXMPP.
 
     See the file LICENSE for copying permission.
 """
@@ -9,11 +9,8 @@ from __future__ import with_statement, unicode_literals
 
 
 from xml.etree import cElementTree as ET
-from . xmlstream.xmlstream import XMLStream
 from . xmlstream.matcher.xmlmask import MatchXMLMask
-from . xmlstream.matcher.many import MatchMany
 from . xmlstream.handler.xmlcallback import XMLCallback
-from . xmlstream.handler.xmlwaiter import XMLWaiter
 from . xmlstream.handler.waiter import Waiter
 from . xmlstream.handler.callback import Callback
 from . xmlstream.stanzabase import registerStanzaPlugin
@@ -24,7 +21,6 @@ from . stanza.presence import Presence
 from . stanza.roster import Roster
 from . stanza.nick import Nick
 from . stanza.htmlim import HTMLIM
-from . stanza.error import Error
 
 import logging
 import threading
@@ -45,7 +41,7 @@ class basexmpp(object):
 		self.resource = ''
 		self.jid = ''
 		self.username = ''
-		self.server = ''
+		self.domain = ''
 		self.plugin = {}
 		self.auto_authorize = True
 		self.auto_subscribe = True
@@ -76,28 +72,35 @@ class basexmpp(object):
 		self.resource = self.getjidresource(jid)
 		self.jid = self.getjidbare(jid)
 		self.username = jid.split('@', 1)[0]
-		self.server = jid.split('@',1)[-1].split('/', 1)[0]
+		self.domain = jid.split('@',1)[-1].split('/', 1)[0]
 	
 	def process(self, *args, **kwargs):
 		for idx in self.plugin:
 			if not self.plugin[idx].post_inited: self.plugin[idx].post_init()
 		return super(basexmpp, self).process(*args, **kwargs)
 		
-	def registerPlugin(self, plugin, pconfig = {}):
+	def registerPlugin(self, plugin, pconfig = {}, pluginModule = None):
 		"""Register a plugin not in plugins.__init__.__all__ but in the plugins
 		directory."""
 		# discover relative "path" to the plugins module from the main app, and import it.
 		# TODO:
 		# gross, this probably isn't necessary anymore, especially for an installed module
-		__import__("%s.%s" % (globals()['plugins'].__name__, plugin))
-		# init the plugin class
-		self.plugin[plugin] = getattr(getattr(plugins, plugin), plugin)(self, pconfig) # eek
-		# all of this for a nice debug? sure.
-		xep = ''
-		if hasattr(self.plugin[plugin], 'xep'):
-			xep = "(XEP-%s) " % self.plugin[plugin].xep
-		logging.debug("Loaded Plugin %s%s" % (xep, self.plugin[plugin].description))
-	
+		try: 
+			if pluginModule:
+				module = __import__(pluginModule, globals(), locals(), [plugin])
+			else:
+				module = __import__("%s.%s" % (globals()['plugins'].__name__, plugin), globals(), locals(), [plugin])
+			# init the plugin class
+			self.plugin[plugin] = getattr(module, plugin)(self, pconfig) # eek
+			# all of this for a nice debug? sure.
+			xep = ''
+			if hasattr(self.plugin[plugin], 'xep'):
+				xep = "(XEP-%s) " % self.plugin[plugin].xep
+			logging.debug("Loaded Plugin %s%s" % (xep, self.plugin[plugin].description))
+		except:
+			logging.exception("Unable to load plugin: %s", plugin )
+
+
 	def register_plugins(self):
 		"""Initiates all plugins in the plugins/__init__.__all__"""
 		if self.plugin_whitelist:
@@ -125,7 +128,7 @@ class basexmpp(object):
 		self.registerHandler(XMLCallback(name, MatchXMLMask(mask), pointer, threaded, disposable, instream))
 	
 	def getId(self):
-		return "%x".upper() % self.id
+		return "%X" % self.id
 
 	def sendXML(self, data, mask=None, timeout=10):
 		return self.send(self.tostring(data), mask, timeout)
@@ -149,16 +152,22 @@ class basexmpp(object):
 		return self.Iq().setStanzaValues({'id': str(id), 'from': ifrom})
 	
 	def makeIqGet(self, queryxmlns = None):
-		iq = self.Iq().setStanzaValues({'type': 'get'})
+		# TODO this should take a 'to' param since more often than not you set 
+		# iq['to']=whatever immediately after.
+		iq = self.Iq().setValues({'type': 'get'})
 		if queryxmlns:
 			iq.append(ET.Element("{%s}query" % queryxmlns))
 		return iq
 	
 	def makeIqResult(self, id):
-		return self.Iq().setStanzaValues({'id': id, 'type': 'result'})
+		# TODO this should take a 'to' param since more often than not you set 
+		# iq['to']=whatever immediately after.
+		return self.Iq().setValues({'id': id, 'type': 'result'})
 	
 	def makeIqSet(self, sub=None):
-		iq = self.Iq().setStanzaValues({'type': 'set'})
+		# TODO this should take a 'to' param since more often than not you set 
+		# iq['to']=whatever immediately after.
+		iq = self.Iq().setValues({'type': 'set'})
 		if sub != None:
 			iq.append(sub)
 		return iq
@@ -168,17 +177,6 @@ class basexmpp(object):
 		iq['error'].setStanzaValues({'type': type, 'condition': condition, 'text': text})
 		return iq
 
-	def makeIqQuery(self, iq, xmlns):
-		query = ET.Element("{%s}query" % xmlns)
-		iq.append(query)
-		return iq
-	
-	def makeQueryRoster(self, iq=None):
-		query = ET.Element("{jabber:iq:roster}query")
-		if iq:
-			iq.append(query)
-		return query
-	
 	def add_event_handler(self, name, pointer, threaded=False, disposable=False):
 		if not name in self.event_handlers:
 			self.event_handlers[name] = []
