@@ -35,13 +35,6 @@ except ImportError:
 	srvsupport = False
 
 
-
-#class PresenceStanzaType(object):
-#	
-#	def fromXML(self, xml):
-#		self.ptype = xml.get('type')
-
-
 class ClientXMPP(basexmpp, XMLStream):
 	"""SleekXMPP's client class.  Use only for good, not evil."""
 
