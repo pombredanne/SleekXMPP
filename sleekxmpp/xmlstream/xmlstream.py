@@ -52,12 +52,12 @@ DEFAULT_KEEPALIVE = 300 # send a single byte every 5 minutes
 class XMLStream(object):
 	"A connection manager with XML events."
 
-	def __init__(self, socket=None, host='', port=5222, escape_quotes=False):
+	def __init__(self, socket=None, host='', port=5222, escape_quotes=False, should_reconnect=True):
 		global ssl_support
 		self.ssl_support = ssl_support
 		self.escape_quotes = escape_quotes
 		self.state = statemachine.StateMachine(('disconnected','connected'))
-		self.should_reconnect = True
+		self.should_reconnect = should_reconnect
 
 		self.setSocket(socket)
 		self.address = (host, int(port))

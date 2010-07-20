@@ -154,7 +154,7 @@ class basexmpp(object):
 	def makeIqGet(self, queryxmlns = None):
 		# TODO this should take a 'to' param since more often than not you set 
 		# iq['to']=whatever immediately after.
-		iq = self.Iq().setValues({'type': 'get'})
+		iq = self.Iq().setStanzaValues({'type': 'get'})
 		if queryxmlns:
 			iq.append(ET.Element("{%s}query" % queryxmlns))
 		return iq
@@ -162,12 +162,12 @@ class basexmpp(object):
 	def makeIqResult(self, id):
 		# TODO this should take a 'to' param since more often than not you set 
 		# iq['to']=whatever immediately after.
-		return self.Iq().setValues({'id': id, 'type': 'result'})
+		return self.Iq().setStanzaValues({'id': id, 'type': 'result'})
 	
 	def makeIqSet(self, sub=None):
 		# TODO this should take a 'to' param since more often than not you set 
 		# iq['to']=whatever immediately after.
-		iq = self.Iq().setValues({'type': 'set'})
+		iq = self.Iq().setStanzaValues({'type': 'set'})
 		if sub != None:
 			iq.append(sub)
 		return iq
