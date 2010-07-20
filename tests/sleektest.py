@@ -219,9 +219,9 @@ class SleekTest(unittest.TestCase):
 
     def streamStart(self, mode='client', skip=True):
         if mode == 'client':
-            self.xmpp = ClientXMPP('tester@localhost', 'test')
+            self.xmpp = ClientXMPP('tester@localhost', 'test', should_reconnect=False)
             self.xmpp.setSocket(TestSocket())
-            self.xmpp.state._set_state('connected')
+            #self.xmpp.state._set_state('connected')
 
             #self.xmpp.state.set('reconnect', False)
             #self.xmpp.state.set('is client', True)
