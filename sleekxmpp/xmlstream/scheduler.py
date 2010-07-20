@@ -41,6 +41,7 @@ class Scheduler(object):
 	def process(self, threaded=True):
 		if threaded:
 			self.thread = threading.Thread(name='shedulerprocess', target=self._process)
+			self.thread.daemon = True
 			self.thread.start()
 		else:
 			self._process()
@@ -76,7 +77,7 @@ class Scheduler(object):
 					if updated: self.schedule = sorted(self.schedule, key=lambda task: task.next)
 			except KeyboardInterrupt:
 				self.run = False
-		logging.debug("Qutting Scheduler thread")
+		logging.debug("Quitting Scheduler thread")
 		if self.parentqueue is not None:
 			self.parentqueue.put(('quit', None, None))
 

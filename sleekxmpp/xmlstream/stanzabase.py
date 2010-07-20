@@ -1,7 +1,7 @@
 """
-    SleekXMPP: The Sleek XMPP Library
-    Copyright (C) 2010  Nathanael C. Fritz
-    This file is part of SleekXMPP.
+	SleekXMPP: The Sleek XMPP Library
+	Copyright (C) 2010  Nathanael C. Fritz
+	This file is part of SleekXMPP.
 
     See the file LICENSE for copying permission.
 """
@@ -345,6 +345,7 @@ class StanzaBase(ElementBase):
 			self['to'] = sto
 		if sfrom is not None:
 			self['from'] = sfrom
+		if sid is not None: self['id'] = sid
 		self.tag = "{%s}%s" % (self.namespace, self.name)
 	
 	def setType(self, value):
@@ -397,9 +398,8 @@ class StanzaBase(ElementBase):
 	def exception(self, e):
 		logging.error(traceback.format_tb(e))
 	
-	def send(self):
-		self.stream.sendRaw(self.__str__())
+	def send(self, priority=5, init=False):
+		self.stream.sendRaw(self.__str__(), priority, init) 
 
 	def __copy__(self):
 		return self.__class__(xml=copy.deepcopy(self.xml), stream=self.stream)
-                

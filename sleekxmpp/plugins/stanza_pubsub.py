@@ -40,6 +40,39 @@ class PubsubStateEvent(ElementBase):
 registerStanzaPlugin(Message, PubsubStateEvent)
 registerStanzaPlugin(PubsubStateEvent, PubsubState)
 
+class PubsubState(ElementBase):
+	namespace = 'http://jabber.org/protocol/psstate'
+	name = 'state'
+	plugin_attrib = 'psstate'
+	interfaces = set(('node', 'item', 'payload'))
+	plugin_attrib_map = {}
+	plugin_tag_map = {}
+	
+	def setPayload(self, value):
+		self.xml.append(value)
+	
+	def getPayload(self):
+		childs = self.xml.getchildren()
+		if len(childs) > 0:
+			return childs[0]
+	
+	def delPayload(self):
+		for child in self.xml.getchildren():
+			self.xml.remove(child)
+
+registerStanzaPlugin(Iq, PubsubState)
+
+class PubsubStateEvent(ElementBase):
+	namespace = 'http://jabber.org/protocol/psstate#event'
+	name = 'event'
+	plugin_attrib = 'psstate_event'
+	intefaces = set(tuple())
+	plugin_attrib_map = {}
+	plugin_tag_map = {}
+
+registerStanzaPlugin(Message, PubsubStateEvent)
+registerStanzaPlugin(PubsubStateEvent, PubsubState)
+
 class Pubsub(ElementBase):
 	namespace = 'http://jabber.org/protocol/pubsub'
 	name = 'pubsub'
