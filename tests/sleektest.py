@@ -221,10 +221,11 @@ class SleekTest(unittest.TestCase):
         if mode == 'client':
             self.xmpp = ClientXMPP('tester@localhost', 'test')
             self.xmpp.setSocket(TestSocket())
+            self.xmpp.state._set_state('connected')
 
-            self.xmpp.state.set('reconnect', False)
-            self.xmpp.state.set('is client', True)
-            self.xmpp.state.set('connected', True)
+            #self.xmpp.state.set('reconnect', False)
+            #self.xmpp.state.set('is client', True)
+            #self.xmpp.state.set('connected', True)
 
             # Must have the stream header ready for xmpp.process() to work
             self.xmpp.socket.recvData(self.xmpp.stream_header)

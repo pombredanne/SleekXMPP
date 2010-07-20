@@ -34,8 +34,8 @@ except ImportError:
 class ClientXMPP(basexmpp, XMLStream):
 	"""SleekXMPP's client class.  Use only for good, not evil."""
 
-	def __init__(self, jid, password, ssl=False, plugin_config = {}, plugin_whitelist=[], escape_quotes=True):
-		XMLStream.__init__(self)
+	def __init__(self, jid, password, ssl=False, plugin_config = {}, plugin_whitelist=[], escape_quotes=True, should_reconnect=True):
+		XMLStream.__init__(self, should_reconnect = should_reconnect)
 		self.default_ns = 'jabber:client'
 		basexmpp.__init__(self)
 		self.plugin_config = plugin_config
@@ -84,6 +84,7 @@ class ClientXMPP(basexmpp, XMLStream):
 		"""Connect to the Jabber Server.  Attempts SRV lookup, and if it fails, uses
 		the JID server.  You can optionally specify a host/port if you're not using 
 		DNS and want to connect to a server address that is different from the XMPP domain."""
+		host = port = None
 		if address:
 			host, port = address
 
