@@ -80,10 +80,12 @@ class ClientXMPP(basexmpp, XMLStream):
 	def get(self, key, default):
 		return self.plugin.get(key, default)
 
-	def connect(self, host=None, port=None):
+	def connect(self, address=None):
 		"""Connect to the Jabber Server.  Attempts SRV lookup, and if it fails, uses
 		the JID server.  You can optionally specify a host/port if you're not using 
 		DNS and want to connect to a server address that is different from the XMPP domain."""
+		if address:
+			host, port = address
 
 		if self.state['connected']: return True
 
