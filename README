@@ -1,4 +1,4 @@
-SleekXMPP is an XMPP library written for Python 3.1+ (with 2.6 compatibility).
+SleekXMPP is an XMPP library written for Python 2.6+ and 3.1+
 Hosted at http://wiki.github.com/fritzy/SleekXMPP/
 
 Featured in examples in XMPP: The Definitive Guide by Kevin Smith, Remko Tronçon, and Peter Saint-Andre
