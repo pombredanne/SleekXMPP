@@ -35,6 +35,9 @@ if __name__ == '__main__':
     optp.add_option('-v','--verbose', help='set logging to COMM', action='store_const', dest='loglevel', const=5, default=logging.INFO)
     optp.add_option("-j","--jid", dest="jid", help="JID to use")
     optp.add_option("-p","--password", dest="password", help="password to use")
+    optp.add_option("-s","--server", dest="server", help="override dns server to use")
+    optp.add_option("-P","--port", dest="port", help="override default or dns port to use")
+	#TODO add server/port settings override
     opts,args = optp.parse_args()
     
     logging.basicConfig(level=opts.loglevel, format='%(levelname)-8s %(message)s')
@@ -47,7 +50,10 @@ if __name__ == '__main__':
     # use this if you don't have pydns, and want to
     # talk to GoogleTalk (e.g.)
 #   if xmpp.connect(('talk.google.com', 5222)):
-    if xmpp.connect():
+    address = None
+    if opts.server and opts.port:
+		address = (opts.server, int(opts.port))
+    if xmpp.connect(address):
         xmpp.process(threaded=False)
         print("done")
     else:

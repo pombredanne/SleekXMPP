@@ -42,7 +42,8 @@ packages     = [ 'sleekxmpp',
 				 'sleekxmpp/stanza',
 				 'sleekxmpp/xmlstream',
 				 'sleekxmpp/xmlstream/matcher',
-				 'sleekxmpp/xmlstream/handler' ]
+				 'sleekxmpp/xmlstream/handler',
+				 'sleekxmpp/thirdparty']
 
 if sys.version_info < (3, 0):
 	packages.append('sleekxmpp/xmlstream/tostring26')
