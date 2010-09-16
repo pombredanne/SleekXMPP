@@ -1,10 +1,10 @@
-from .. xmlstream.stanzabase import registerStanzaPlugin, ElementBase, ET, JID
-from .. stanza.iq import Iq
-from .. stanza.message import Message
-from .. basexmpp import basexmpp
-from .. xmlstream.xmlstream import XMLStream
+from sleekxmpp.plugins.base import registerStanzaPlugin, ElementBase, ET, JID
+from sleekxmpp.stanza.iq import Iq
+from sleekxmpp.stanza.message import Message
+from sleekxmpp.basexmpp import basexmpp
+from sleekxmpp.xmlstream.xmlstream import XMLStream
 import logging
-from . import xep_0004
+from sleekxmpp.plugins import xep_0004
 
 
 class PubsubState(ElementBase):

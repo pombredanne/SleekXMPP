@@ -1,12 +1,13 @@
 from __future__ import with_statement
-from . import base
+#from .. import base
+from .. base import *
 import logging
 #from xml.etree import cElementTree as ET
-from .. xmlstream.stanzabase import registerStanzaPlugin, ElementBase, ET
-from . import stanza_pubsub
-from . xep_0004 import Form
+#from .. .. xmlstream.stanzabase import registerStanzaPlugin, ElementBase, ET
+from . import stanza as stanza_pubsub
+from .. xep_0004 import Form
 
-class xep_0060(base.base_plugin):
+class xep_0060(base_plugin):
 	"""
 	XEP-0060 Publish Subscribe
 	"""
@@ -14,6 +15,7 @@ class xep_0060(base.base_plugin):
 	def plugin_init(self):
 		self.xep = '0060'
 		self.description = 'Publish-Subscribe'
+		self.stanza = stanza_pubsub
 	
 	def create_node(self, jid, node, config=None, collection=False, ntype=None):
 		pubsub = ET.Element('{http://jabber.org/protocol/pubsub}pubsub')

@@ -6,6 +6,8 @@
     See the file LICENSE for copying permission.
 """
 
+from .. xmlstream.stanzabase import registerStanzaPlugin, ElementBase, ET, JID
+
 
 class base_plugin(object):
 	

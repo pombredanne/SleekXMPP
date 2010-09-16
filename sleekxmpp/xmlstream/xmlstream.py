@@ -318,7 +318,10 @@ class XMLStream(object):
 				stanza_copy = stanza_type(self, copy.deepcopy(xmlobj))
 				handler.prerun(stanza_copy)
 				self.eventqueue.put(('stanza', handler, stanza_copy))
-				if handler.checkDelete(): self.__handlers.pop(self.__handlers.index(handler))
+				try:
+					if handler.checkDelete(): self.__handlers.pop(self.__handlers.index(handler))
+				except ValueError:
+					pass # could not delete handler
 				unhandled = False
 		if unhandled:
 			stanza.unhandled()
