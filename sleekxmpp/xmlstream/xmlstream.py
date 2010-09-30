@@ -55,6 +55,7 @@ class XMLStream(object):
         self.state = StateManager()
         self.state.add_machine('connection', ('disconnected', 'connected'))
         self.state.add_function('connection', 'disconnected', 'connected', self.__connect)
+        self.state.add_function('connection', 'connected', 'disconnected', self.__connect)
         #self.state = statemachine.StateMachine()
         
         #self.state.addStates({'connected':False, 'is client':False, 'ssl':False, 'tls':False, 'reconnect':True, 'processing':False, 'disconnecting':False}) #set initial states
