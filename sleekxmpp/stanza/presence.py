@@ -6,9 +6,8 @@
     See the file LICENSE for copying permission.
 """
 
-from sleekxmpp.stanza import Error
 from sleekxmpp.stanza.rootstanza import RootStanza
-from sleekxmpp.xmlstream import StanzaBase, ET
+from sleekxmpp.xmlstream import StanzaBase
 
 
 class Presence(RootStanza):
@@ -61,16 +60,28 @@ class Presence(RootStanza):
         set_priority -- Set the value of the <priority> element.
     """
 
-    namespace = 'jabber:client'
     name = 'presence'
-    interfaces = set(('type', 'to', 'from', 'id', 'show',
-                      'status', 'priority'))
-    sub_interfaces = set(('show', 'status', 'priority'))
+    namespace = 'jabber:client'
     plugin_attrib = name
+    interfaces = set(['type', 'to', 'from', 'id', 'show',
+                      'status', 'priority'])
+    sub_interfaces = set(['show', 'status', 'priority'])
+    lang_interfaces = set(['status'])
 
-    types = set(('available', 'unavailable', 'error', 'probe', 'subscribe',
-                 'subscribed', 'unsubscribe', 'unsubscribed'))
-    showtypes = set(('dnd', 'chat', 'xa', 'away'))
+    types = set(['available', 'unavailable', 'error', 'probe', 'subscribe',
+                 'subscribed', 'unsubscribe', 'unsubscribed'])
+    showtypes = set(['dnd', 'chat', 'xa', 'away'])
+
+    def __init__(self, *args, **kwargs):
+        """
+        Initialize a new <presence /> stanza with an optional 'id' value.
+
+        Overrides StanzaBase.__init__.
+        """
+        StanzaBase.__init__(self, *args, **kwargs)
+        if self['id'] == '':
+            if self.stream is not None and self.stream.use_presence_ids:
+                self['id'] = self.stream.new_id()
 
     def exception(self, e):
         """

@@ -6,28 +6,28 @@
     See the file LICENSE for copying permission.
 """
 
-from sleekxmpp.plugins import base
-from sleekxmpp.plugins.xep_0009.stanza.RPC import RPCQuery, MethodCall, MethodResponse
-from sleekxmpp.stanza.iq import Iq
-from sleekxmpp.xmlstream.handler.callback import Callback
-from sleekxmpp.xmlstream.matcher.xpath import MatchXPath
-from sleekxmpp.xmlstream.stanzabase import register_stanza_plugin
-from xml.etree import cElementTree as ET
 import logging
 
+from sleekxmpp import Iq
+from sleekxmpp.xmlstream import ET, register_stanza_plugin
+from sleekxmpp.xmlstream.handler import Callback
+from sleekxmpp.xmlstream.matcher import MatchXPath
+from sleekxmpp.plugins import BasePlugin
+from sleekxmpp.plugins.xep_0009 import stanza
+from sleekxmpp.plugins.xep_0009.stanza.RPC import RPCQuery, MethodCall, MethodResponse
 
 
 log = logging.getLogger(__name__)
 
 
+class XEP_0009(BasePlugin):
 
-class xep_0009(base.base_plugin):
+    name = 'xep_0009'
+    description = 'XEP-0009: Jabber-RPC'
+    dependencies = set(['xep_0030'])
+    stanza = stanza
 
     def plugin_init(self):
-        self.xep = '0009'
-        self.description = 'Jabber-RPC'
-        #self.stanza = sleekxmpp.plugins.xep_0009.stanza
-
         register_stanza_plugin(Iq, RPCQuery)
         register_stanza_plugin(RPCQuery, MethodCall)
         register_stanza_plugin(RPCQuery, MethodResponse)
@@ -51,10 +51,8 @@ class xep_0009(base.base_plugin):
         self.xmpp.add_event_handler('error', self._handle_error)
         #self.activeCalls = []
 
-    def post_init(self):
-        base.base_plugin.post_init(self)
-        self.xmpp.plugin['xep_0030'].add_feature('jabber:iq:rpc')
-        self.xmpp.plugin['xep_0030'].add_identity('automation','rpc')
+        self.xmpp['xep_0030'].add_feature('jabber:iq:rpc')
+        self.xmpp['xep_0030'].add_identity('automation','rpc')
 
     def make_iq_method_call(self, pto, pmethod, params):
         iq = self.xmpp.makeIqSet()
@@ -128,22 +126,22 @@ class xep_0009(base.base_plugin):
     def _handle_method_call(self, iq):
         type = iq['type']
         if type == 'set':
-            log.debug("Incoming Jabber-RPC call from %s" % iq['from'])
+            log.debug("Incoming Jabber-RPC call from %s", iq['from'])
             self.xmpp.event('jabber_rpc_method_call', iq)
         else:
             if type == 'error' and ['rpc_query'] is None:
                 self.handle_error(iq)
             else:
-                log.debug("Incoming Jabber-RPC error from %s" % iq['from'])
+                log.debug("Incoming Jabber-RPC error from %s", iq['from'])
                 self.xmpp.event('jabber_rpc_error', iq)
 
     def _handle_method_response(self, iq):
         if iq['rpc_query']['method_response']['fault'] is not None:
-            log.debug("Incoming Jabber-RPC fault from %s" % iq['from'])
+            log.debug("Incoming Jabber-RPC fault from %s", iq['from'])
             #self._on_jabber_rpc_method_fault(iq)
             self.xmpp.event('jabber_rpc_method_fault', iq)
         else:
-            log.debug("Incoming Jabber-RPC response from %s" % iq['from'])
+            log.debug("Incoming Jabber-RPC response from %s", iq['from'])
             self.xmpp.event('jabber_rpc_method_response', iq)
 
     def _handle_error(self, iq):
@@ -218,4 +216,3 @@ class xep_0009(base.base_plugin):
     def _extract_method(self, stanza):
         xml = ET.fromstring("%s" % stanza)
         return xml.find("./methodCall/methodName").text
-

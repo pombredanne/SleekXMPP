@@ -11,7 +11,6 @@
 
 import sys
 import logging
-import time
 import getpass
 from optparse import OptionParser
 
@@ -22,8 +21,10 @@ import sleekxmpp
 # throughout SleekXMPP, we will set the default encoding
 # ourselves to UTF-8.
 if sys.version_info < (3, 0):
-    reload(sys)
-    sys.setdefaultencoding('utf8')
+    from sleekxmpp.util.misc_ops import setdefaultencoding
+    setdefaultencoding('utf8')
+else:
+    raw_input = input
 
 
 class PingTest(sleekxmpp.ClientXMPP):
@@ -42,16 +43,16 @@ class PingTest(sleekxmpp.ClientXMPP):
         # The session_start event will be triggered when
         # the bot establishes its connection with the server
         # and the XML streams are ready for use. We want to
-        # listen for this event so that we we can intialize
+        # listen for this event so that we we can initialize
         # our roster.
-        self.add_event_handler("session_start", self.start)
+        self.add_event_handler("session_start", self.start, threaded=True)
 
     def start(self, event):
         """
         Process the session_start event.
 
         Typical actions for the session_start event are
-        requesting the roster and broadcasting an intial
+        requesting the roster and broadcasting an initial
         presence stanza.
 
         Arguments:
@@ -70,7 +71,7 @@ class PingTest(sleekxmpp.ClientXMPP):
             self.disconnect()
             sys.exit(1)
         else:
-            logging.info("Success! RTT: %s" % str(result))
+            logging.info("Success! RTT: %s", str(result))
             self.disconnect()
 
 
@@ -127,14 +128,14 @@ if __name__ == '__main__':
 
     # Connect to the XMPP server and start processing XMPP stanzas.
     if xmpp.connect():
-        # If you do not have the pydns library installed, you will need
+        # If you do not have the dnspython library installed, you will need
         # to manually specify the name of the server if it does not match
         # the one in the JID. For example, to use Google Talk you would
         # need to use:
         #
         # if xmpp.connect(('talk.google.com', 5222)):
         #     ...
-        xmpp.process(threaded=False)
+        xmpp.process(block=True)
         print("Done")
     else:
         print("Unable to connect.")

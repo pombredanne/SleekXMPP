@@ -11,7 +11,6 @@
 
 import sys
 import logging
-import time
 import getpass
 from optparse import OptionParser
 
@@ -22,8 +21,10 @@ import sleekxmpp
 # throughout SleekXMPP, we will set the default encoding
 # ourselves to UTF-8.
 if sys.version_info < (3, 0):
-    reload(sys)
-    sys.setdefaultencoding('utf8')
+    from sleekxmpp.util.misc_ops import setdefaultencoding
+    setdefaultencoding('utf8')
+else:
+    raw_input = input
 
 
 class EchoBot(sleekxmpp.ClientXMPP):
@@ -39,7 +40,7 @@ class EchoBot(sleekxmpp.ClientXMPP):
         # The session_start event will be triggered when
         # the bot establishes its connection with the server
         # and the XML streams are ready for use. We want to
-        # listen for this event so that we we can intialize
+        # listen for this event so that we we can initialize
         # our roster.
         self.add_event_handler("session_start", self.start)
 
@@ -53,7 +54,7 @@ class EchoBot(sleekxmpp.ClientXMPP):
         Process the session_start event.
 
         Typical actions for the session_start event are
-        requesting the roster and broadcasting an intial
+        requesting the roster and broadcasting an initial
         presence stanza.
 
         Arguments:
@@ -76,7 +77,8 @@ class EchoBot(sleekxmpp.ClientXMPP):
                    for stanza objects and the Message stanza to see
                    how it may be used.
         """
-        msg.reply("Thanks for sending\n%(body)s" % msg).send()
+        if msg['type'] in ('chat', 'normal'):
+            msg.reply("Thanks for sending\n%(body)s" % msg).send()
 
 
 if __name__ == '__main__':
@@ -120,6 +122,19 @@ if __name__ == '__main__':
     xmpp.register_plugin('xep_0060') # PubSub
     xmpp.register_plugin('xep_0199') # XMPP Ping
 
+    # If you are connecting to Facebook and wish to use the
+    # X-FACEBOOK-PLATFORM authentication mechanism, you will need
+    # your API key and an access token. Then you'll set:
+    # xmpp.credentials['api_key'] = 'THE_API_KEY'
+    # xmpp.credentials['access_token'] = 'THE_ACCESS_TOKEN'
+
+    # If you are connecting to MSN, then you will need an
+    # access token, and it does not matter what JID you
+    # specify other than that the domain is 'messenger.live.com',
+    # so '_@messenger.live.com' will work. You can specify
+    # the access token as so:
+    # xmpp.credentials['access_token'] = 'THE_ACCESS_TOKEN'
+
     # If you are working with an OpenFire server, you may need
     # to adjust the SSL version used:
     # xmpp.ssl_version = ssl.PROTOCOL_SSLv3
@@ -129,14 +144,14 @@ if __name__ == '__main__':
 
     # Connect to the XMPP server and start processing XMPP stanzas.
     if xmpp.connect():
-        # If you do not have the pydns library installed, you will need
+        # If you do not have the dnspython library installed, you will need
         # to manually specify the name of the server if it does not match
         # the one in the JID. For example, to use Google Talk you would
         # need to use:
         #
         # if xmpp.connect(('talk.google.com', 5222)):
         #     ...
-        xmpp.process(threaded=False)
+        xmpp.process(block=True)
         print("Done")
     else:
         print("Unable to connect.")

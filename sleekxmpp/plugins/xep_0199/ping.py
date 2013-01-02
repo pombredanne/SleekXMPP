@@ -11,17 +11,18 @@ import logging
 
 import sleekxmpp
 from sleekxmpp import Iq
+from sleekxmpp.exceptions import IqError, IqTimeout
 from sleekxmpp.xmlstream import register_stanza_plugin
 from sleekxmpp.xmlstream.matcher import StanzaPath
 from sleekxmpp.xmlstream.handler import Callback
-from sleekxmpp.plugins.base import base_plugin
+from sleekxmpp.plugins import BasePlugin
 from sleekxmpp.plugins.xep_0199 import stanza, Ping
 
 
 log = logging.getLogger(__name__)
 
 
-class xep_0199(base_plugin):
+class XEP_0199(BasePlugin):
 
     """
     XEP-0199: XMPP Ping
@@ -46,18 +47,20 @@ class xep_0199(base_plugin):
                      round trip time.
     """
 
+    name = 'xep_0199'
+    description = 'XEP-0199: XMPP Ping'
+    dependencies = set(['xep_0030'])
+    stanza = stanza
+    default_config = {
+        'keepalive': False,
+        'frequency': 300,
+        'timeout': 30
+    }
+
     def plugin_init(self):
         """
         Start the XEP-0199 plugin.
         """
-        self.description = 'XMPP Ping'
-        self.xep = '0199'
-        self.stanza = stanza
-
-        self.keepalive = self.config.get('keepalive', False)
-        self.frequency = float(self.config.get('frequency', 300))
-        self.timeout = self.config.get('timeout', 30)
-
         register_stanza_plugin(Iq, Ping)
 
         self.xmpp.register_handler(
@@ -69,10 +72,19 @@ class xep_0199(base_plugin):
             self.xmpp.add_event_handler('session_start',
                                         self._handle_keepalive,
                                         threaded=True)
+            self.xmpp.add_event_handler('session_end',
+                                        self._handle_session_end)
 
-    def post_init(self):
-        """Handle cross-plugin dependencies."""
-        base_plugin.post_init(self)
+    def plugin_end(self):
+        self.xmpp['xep_0030'].del_feature(feature=Ping.namespace)
+        self.xmpp.remove_handler('Ping')
+        if self.keepalive:
+            self.xmpp.del_event_handler('session_start',
+                                        self._handle_keepalive)
+            self.xmpp.del_event_handler('session_end',
+                                        self._handle_session_end)
+
+    def session_bind(self, jid):
         self.xmpp['xep_0030'].add_feature(Ping.namespace)
 
     def _handle_keepalive(self, event):
@@ -89,8 +101,13 @@ class xep_0199(base_plugin):
         def scheduled_ping():
             """Send ping request to the server."""
             log.debug("Pinging...")
-            resp = self.send_ping(self.xmpp.boundjid.host, self.timeout)
-            if resp is None or resp is False:
+            try:
+                self.send_ping(self.xmpp.boundjid.host, self.timeout)
+            except IqError:
+                log.debug("Ping response was an error." + \
+                          "Requesting Reconnect.")
+                self.xmpp.reconnect()
+            except IqTimeout:
                 log.debug("Did not recieve ping back in time." + \
                           "Requesting Reconnect.")
                 self.xmpp.reconnect()
@@ -100,6 +117,9 @@ class xep_0199(base_plugin):
                            scheduled_ping,
                            repeat=True)
 
+    def _handle_session_end(self, event):
+        self.xmpp.scheduler.remove('Ping Keep Alive')
+
     def _handle_ping(self, iq):
         """
         Automatically reply to ping requests.
@@ -107,8 +127,8 @@ class xep_0199(base_plugin):
         Arguments:
             iq -- The ping request.
         """
-        log.debug("Pinged by %s" % iq['from'])
-        iq.reply().enable('ping').send()
+        log.debug("Pinged by %s", iq['from'])
+        iq.reply().send()
 
     def send_ping(self, jid, timeout=None, errorfalse=False,
                   ifrom=None, block=True, callback=None):
@@ -130,21 +150,25 @@ class xep_0199(base_plugin):
                           is received. Useful in conjunction with
                           the option block=False.
         """
-        log.debug("Pinging %s" % jid)
+        log.debug("Pinging %s", jid)
         if timeout is None:
             timeout = self.timeout
 
         iq = self.xmpp.Iq()
         iq['type'] = 'get'
         iq['to'] = jid
-        if ifrom:
-            iq['from'] = ifrom
+        iq['from'] = ifrom
         iq.enable('ping')
 
         start_time = time.clock()
-        resp = iq.send(block=block,
-                       timeout=timeout,
-                       callback=callback)
+
+        try:
+            resp = iq.send(block=block,
+                           timeout=timeout,
+                           callback=callback)
+        except IqError as err:
+            resp = err.iq
+
         end_time = time.clock()
 
         delay = end_time - start_time
@@ -152,12 +176,5 @@ class xep_0199(base_plugin):
         if not block:
             return None
 
-        if not resp or resp['type'] == 'error':
-            return False
-
-        log.debug("Pong: %s %f" % (jid, delay))
+        log.debug("Pong: %s %f", jid, delay)
         return delay
-
-
-# Backwards compatibility for names
-xep_0199.sendPing = xep_0199.send_ping

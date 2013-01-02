@@ -7,16 +7,16 @@
 """
 
 import unittest
-try:
-    import Queue as queue
-except:
-    import queue
+from xml.parsers.expat import ExpatError
 
 import sleekxmpp
 from sleekxmpp import ClientXMPP, ComponentXMPP
+from sleekxmpp.util import Queue
 from sleekxmpp.stanza import Message, Iq, Presence
 from sleekxmpp.test import TestSocket, TestLiveSocket
-from sleekxmpp.xmlstream import StanzaBase, ET, register_stanza_plugin
+from sleekxmpp.exceptions import XMPPError, IqTimeout, IqError
+from sleekxmpp.xmlstream import ET, register_stanza_plugin
+from sleekxmpp.xmlstream import ElementBase, StanzaBase
 from sleekxmpp.xmlstream.tostring import tostring
 from sleekxmpp.xmlstream.matcher import StanzaPath, MatcherId
 from sleekxmpp.xmlstream.matcher import MatchXMLMask, MatchXPath
@@ -56,15 +56,13 @@ class SleekTest(unittest.TestCase):
         unittest.TestCase.__init__(self, *args, **kwargs)
         self.xmpp = None
 
-    def runTest(self):
-        pass
-
     def parse_xml(self, xml_string):
         try:
             xml = ET.fromstring(xml_string)
             return xml
-        except SyntaxError as e:
-            if 'unbound' in e.msg:
+        except (SyntaxError, ExpatError) as e:
+            msg = e.msg if hasattr(e, 'msg') else e.message
+            if 'unbound' in msg:
                 known_prefixes = {
                         'stream': 'http://etherx.jabber.org/streams'}
 
@@ -75,7 +73,7 @@ class SleekTest(unittest.TestCase):
                             known_prefixes[prefix],
                             xml_string)
                 xml = self.parse_xml(xml_string)
-                xml = xml.getchildren()[0]
+                xml = list(xml)[0]
                 return xml
             else:
                 self.fail("XML data was mal-formed:\n%s" % xml_string)
@@ -149,6 +147,32 @@ class SleekTest(unittest.TestCase):
             self.assertEqual(str(jid), string,
                     "String does not match: %s" % str(jid))
 
+    def check_roster(self, owner, jid, name=None, subscription=None,
+                     afrom=None, ato=None, pending_out=None, pending_in=None,
+                     groups=None):
+        roster = self.xmpp.roster[owner][jid]
+        if name is not None:
+            self.assertEqual(roster['name'], name,
+                    "Incorrect name value: %s" % roster['name'])
+        if subscription is not None:
+            self.assertEqual(roster['subscription'], subscription,
+                    "Incorrect subscription: %s" % roster['subscription'])
+        if afrom is not None:
+            self.assertEqual(roster['from'], afrom,
+                    "Incorrect from state: %s" % roster['from'])
+        if ato is not None:
+            self.assertEqual(roster['to'], ato,
+                    "Incorrect to state: %s" % roster['to'])
+        if pending_out is not None:
+            self.assertEqual(roster['pending_out'], pending_out,
+                    "Incorrect pending_out state: %s" % roster['pending_out'])
+        if pending_in is not None:
+            self.assertEqual(roster['pending_in'], pending_out,
+                    "Incorrect pending_in state: %s" % roster['pending_in'])
+        if groups is not None:
+            self.assertEqual(roster['groups'], groups,
+                    "Incorrect groups: %s" % roster['groups'])
+
     # ------------------------------------------------------------------
     # Methods for comparing stanza objects to XML strings
 
@@ -201,7 +225,7 @@ class SleekTest(unittest.TestCase):
                     "Stanza:\n%s" % str(stanza))
         else:
             stanza_class = stanza.__class__
-            if isinstance(criteria, str):
+            if not isinstance(criteria, ElementBase):
                 xml = self.parse_xml(criteria)
             else:
                 xml = criteria.xml
@@ -258,10 +282,18 @@ class SleekTest(unittest.TestCase):
     # ------------------------------------------------------------------
     # Methods for simulating stanza streams.
 
+    def stream_disconnect(self):
+        """
+        Simulate a stream disconnection.
+        """
+        if self.xmpp:
+            self.xmpp.socket.disconnect_error()
+
     def stream_start(self, mode='client', skip=True, header=None,
                            socket='mock', jid='tester@localhost',
                            password='test', server='localhost',
-                           port=5222, plugins=None):
+                           port=5222, sasl_mech=None,
+                           plugins=None, plugin_config={}):
         """
         Initialize an XMPP client or component using a dummy XML stream.
 
@@ -285,23 +317,31 @@ class SleekTest(unittest.TestCase):
                         are loaded.
         """
         if mode == 'client':
-            self.xmpp = ClientXMPP(jid, password)
+            self.xmpp = ClientXMPP(jid, password,
+                                   sasl_mech=sasl_mech,
+                                   plugin_config=plugin_config)
         elif mode == 'component':
             self.xmpp = ComponentXMPP(jid, password,
-                                      server, port)
+                                      server, port,
+                                      plugin_config=plugin_config)
         else:
             raise ValueError("Unknown XMPP connection mode.")
 
+        # Remove unique ID prefix to make it easier to test
+        self.xmpp._id_prefix = ''
+        self.xmpp._disconnect_wait_for_threads = False
+        self.xmpp.default_lang = None
+        self.xmpp.peer_default_lang = None
+
         # We will use this to wait for the session_start event
         # for live connections.
-        skip_queue = queue.Queue()
+        skip_queue = Queue()
 
         if socket == 'mock':
             self.xmpp.set_socket(TestSocket())
 
             # Simulate connecting for mock sockets.
             self.xmpp.auto_reconnect = False
-            self.xmpp.is_client = True
             self.xmpp.state._set_state('connected')
 
             # Must have the stream header ready for xmpp.process() to work.
@@ -310,11 +350,16 @@ class SleekTest(unittest.TestCase):
             self.xmpp.socket.recv_data(header)
         elif socket == 'live':
             self.xmpp.socket_class = TestLiveSocket
+
             def wait_for_session(x):
                 self.xmpp.socket.clear()
                 skip_queue.put('started')
+
             self.xmpp.add_event_handler('session_start', wait_for_session)
-            self.xmpp.connect()
+            if server is not None:
+                self.xmpp.connect((server, port))
+            else:
+                self.xmpp.connect()
         else:
             raise ValueError("Unknown socket type.")
 
@@ -323,9 +368,16 @@ class SleekTest(unittest.TestCase):
         else:
             for plugin in plugins:
                 self.xmpp.register_plugin(plugin)
+
+        # Some plugins require messages to have ID values. Set
+        # this to True in tests related to those plugins.
+        self.xmpp.use_message_ids = False
+
         self.xmpp.process(threaded=True)
         if skip:
             if socket != 'live':
+                # Mark send queue as usable
+                self.xmpp.session_started_event.set()
                 # Clear startup stanzas
                 self.xmpp.socket.next_sent(timeout=1)
                 if mode == 'component':
@@ -338,6 +390,7 @@ class SleekTest(unittest.TestCase):
                           sid='',
                           stream_ns="http://etherx.jabber.org/streams",
                           default_ns="jabber:client",
+                          default_lang="en",
                           version="1.0",
                           xml_header=True):
         """
@@ -365,6 +418,8 @@ class SleekTest(unittest.TestCase):
             parts.append('from="%s"' % sfrom)
         if sid:
             parts.append('id="%s"' % sid)
+        if default_lang:
+            parts.append('xml:lang="%s"' % default_lang)
         parts.append('version="%s"' % version)
         parts.append('xmlns:stream="%s"' % stream_ns)
         parts.append('xmlns="%s"' % default_ns)
@@ -464,9 +519,9 @@ class SleekTest(unittest.TestCase):
         if '{%s}lang' % xml_ns in recv_xml.attrib:
             del recv_xml.attrib['{%s}lang' % xml_ns]
 
-        if recv_xml.getchildren:
+        if list(recv_xml):
             # We received more than just the header
-            for xml in recv_xml.getchildren():
+            for xml in recv_xml:
                 self.xmpp.socket.recv_data(tostring(xml))
 
             attrib = recv_xml.attrib
@@ -516,6 +571,7 @@ class SleekTest(unittest.TestCase):
                           sid='',
                           stream_ns="http://etherx.jabber.org/streams",
                           default_ns="jabber:client",
+                          default_lang="en",
                           version="1.0",
                           xml_header=False,
                           timeout=1):
@@ -537,6 +593,7 @@ class SleekTest(unittest.TestCase):
         header = self.make_header(sto, sfrom, sid,
                                   stream_ns=stream_ns,
                                   default_ns=default_ns,
+                                  default_lang=default_lang,
                                   version=version,
                                   xml_header=xml_header)
         sent_header = self.xmpp.socket.next_sent(timeout)
@@ -600,8 +657,13 @@ class SleekTest(unittest.TestCase):
                             Defaults to the value of self.match_method.
         """
         sent = self.xmpp.socket.next_sent(timeout)
+        if data is None and sent is None:
+            return
+        if data is None and sent is not None:
+            self.fail("Stanza data was sent: %s" % sent)
         if sent is None:
             self.fail("No stanza was sent.")
+
         xml = self.parse_xml(sent)
         self.fix_namespaces(xml, 'jabber:client')
         sent = self.xmpp._build_stanza(xml, 'jabber:client')
@@ -638,7 +700,7 @@ class SleekTest(unittest.TestCase):
         if xml.tag.startswith('{'):
             return
         xml.tag = '{%s}%s' % (ns, xml.tag)
-        for child in xml.getchildren():
+        for child in xml:
             self.fix_namespaces(child, ns)
 
     def compare(self, xml, *other):
@@ -681,7 +743,7 @@ class SleekTest(unittest.TestCase):
             return False
 
         # Step 4: Check children count
-        if len(xml.getchildren()) != len(other.getchildren()):
+        if len(list(xml)) != len(list(other)):
             return False
 
         # Step 5: Recursively check children

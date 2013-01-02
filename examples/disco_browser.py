@@ -10,12 +10,12 @@
 """
 
 import sys
-import time
 import logging
 import getpass
 from optparse import OptionParser
 
 import sleekxmpp
+from sleekxmpp.exceptions import IqError, IqTimeout
 
 
 # Python versions before 3.0 do not use UTF-8 encoding
@@ -23,8 +23,10 @@ import sleekxmpp
 # throughout SleekXMPP, we will set the default encoding
 # ourselves to UTF-8.
 if sys.version_info < (3, 0):
-    reload(sys)
-    sys.setdefaultencoding('utf8')
+    from sleekxmpp.util.misc_ops import setdefaultencoding
+    setdefaultencoding('utf8')
+else:
+    raw_input = input
 
 
 class Disco(sleekxmpp.ClientXMPP):
@@ -59,16 +61,16 @@ class Disco(sleekxmpp.ClientXMPP):
         # The session_start event will be triggered when
         # the bot establishes its connection with the server
         # and the XML streams are ready for use. We want to
-        # listen for this event so that we we can intialize
+        # listen for this event so that we we can initialize
         # our roster.
-        self.add_event_handler("session_start", self.start)
+        self.add_event_handler("session_start", self.start, threaded=True)
 
     def start(self, event):
         """
         Process the session_start event.
 
         Typical actions for the session_start event are
-        requesting the roster and broadcasting an intial
+        requesting the roster and broadcasting an initial
         presence stanza.
 
         In this case, we send disco#info and disco#items
@@ -82,50 +84,54 @@ class Disco(sleekxmpp.ClientXMPP):
         self.get_roster()
         self.send_presence()
 
-        if self.get in self.info_types:
-            # By using block=True, the result stanza will be
-            # returned. Execution will block until the reply is
-            # received. Non-blocking options would be to listen
-            # for the disco_info event, or passing a handler
-            # function using the callback parameter.
-            info = self['xep_0030'].get_info(jid=self.target_jid,
-                                             node=self.target_node,
-                                             block=True)
-        if self.get in self.items_types:
-            # The same applies from above. Listen for the
-            # disco_items event or pass a callback function
-            # if you need to process a non-blocking request.
-            items = self['xep_0030'].get_items(jid=self.target_jid,
-                                               node=self.target_node,
-                                               block=True)
+        try:
+            if self.get in self.info_types:
+                # By using block=True, the result stanza will be
+                # returned. Execution will block until the reply is
+                # received. Non-blocking options would be to listen
+                # for the disco_info event, or passing a handler
+                # function using the callback parameter.
+                info = self['xep_0030'].get_info(jid=self.target_jid,
+                                                 node=self.target_node,
+                                                 block=True)
+            elif self.get in self.items_types:
+                # The same applies from above. Listen for the
+                # disco_items event or pass a callback function
+                # if you need to process a non-blocking request.
+                items = self['xep_0030'].get_items(jid=self.target_jid,
+                                                   node=self.target_node,
+                                                   block=True)
+            else:
+                logging.error("Invalid disco request type.")
+                return
+        except IqError as e:
+            logging.error("Entity returned an error: %s" % e.iq['error']['condition'])
+        except IqTimeout:
+            logging.error("No response received.")
         else:
-            logging.error("Invalid disco request type.")
-            self.disconnect()
-            return
-
-        header = 'XMPP Service Discovery: %s' % self.target_jid
-        print(header)
-        print('-' * len(header))
-        if self.target_node != '':
-            print('Node: %s' % self.target_node)
+            header = 'XMPP Service Discovery: %s' % self.target_jid
+            print(header)
             print('-' * len(header))
+            if self.target_node != '':
+                print('Node: %s' % self.target_node)
+                print('-' * len(header))
 
-        if self.get in self.identity_types:
-            print('Identities:')
-            for identity in info['disco_info']['identities']:
-                print('  - %s' % str(identity))
+            if self.get in self.identity_types:
+                print('Identities:')
+                for identity in info['disco_info']['identities']:
+                    print('  - %s' % str(identity))
 
-        if self.get in self.feature_types:
-            print('Features:')
-            for feature in info['disco_info']['features']:
-                print('  - %s' % feature)
+            if self.get in self.feature_types:
+                print('Features:')
+                for feature in info['disco_info']['features']:
+                    print('  - %s' % feature)
 
-        if self.get in self.items_types:
-            print('Items:')
-            for item in items['disco_items']['items']:
-                print('  - %s' % str(item))
-
-        self.disconnect()
+            if self.get in self.items_types:
+                print('Items:')
+                for item in items['disco_items']['items']:
+                    print('  - %s' % str(item))
+        finally:
+            self.disconnect()
 
 
 if __name__ == '__main__':
@@ -186,13 +192,13 @@ if __name__ == '__main__':
 
     # Connect to the XMPP server and start processing XMPP stanzas.
     if xmpp.connect():
-        # If you do not have the pydns library installed, you will need
+        # If you do not have the dnspython library installed, you will need
         # to manually specify the name of the server if it does not match
         # the one in the JID. For example, to use Google Talk you would
         # need to use:
         #
         # if xmpp.connect(('talk.google.com', 5222)):
         #     ...
-        xmpp.process(threaded=False)
+        xmpp.process(block=True)
     else:
         print("Unable to connect.")

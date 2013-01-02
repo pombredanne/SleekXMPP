@@ -38,6 +38,7 @@ class ChatState(ElementBase):
     namespace = 'http://jabber.org/protocol/chatstates'
     plugin_attrib = 'chat_state'
     interfaces = set(('chat_state',))
+    sub_interfaces = interfaces
     is_extension = True
 
     states = set(('active', 'composing', 'gone', 'inactive', 'paused'))
@@ -71,3 +72,23 @@ class ChatState(ElementBase):
             if state_xml is not None:
                 self.xml = ET.Element('')
                 parent.xml.remove(state_xml)
+
+
+class Active(ChatState):
+    name = 'active'
+
+
+class Composing(ChatState):
+    name = 'composing'
+
+
+class Gone(ChatState):
+    name = 'gone'
+
+
+class Inactive(ChatState):
+    name = 'inactive'
+
+
+class Paused(ChatState):
+    name = 'paused'

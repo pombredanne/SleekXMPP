@@ -6,7 +6,7 @@
     See the file LICENSE for copying permission.
 """
 
-from sleekxmpp.xmlstream import ElementBase, ET, register_stanza_plugin
+from sleekxmpp.xmlstream import ElementBase, ET
 
 
 class Error(ElementBase):
@@ -51,8 +51,11 @@ class Error(ElementBase):
     namespace = 'jabber:client'
     name = 'error'
     plugin_attrib = 'error'
-    interfaces = set(('code', 'condition', 'text', 'type'))
+    interfaces = set(('code', 'condition', 'text', 'type',
+                      'gone', 'redirect', 'by'))
     sub_interfaces = set(('text',))
+    plugin_attrib_map = {}
+    plugin_tag_map = {}
     conditions = set(('bad-request', 'conflict', 'feature-not-implemented',
                       'forbidden', 'gone', 'internal-server-error',
                       'item-not-found', 'jid-malformed', 'not-acceptable',
@@ -86,9 +89,11 @@ class Error(ElementBase):
 
     def get_condition(self):
         """Return the condition element's name."""
-        for child in self.xml.getchildren():
+        for child in self.xml:
             if "{%s}" % self.condition_ns in child.tag:
-                return child.tag.split('}', 1)[-1]
+                cond = child.tag.split('}', 1)[-1]
+                if cond in self.conditions:
+                    return cond
         return ''
 
     def set_condition(self, value):
@@ -105,7 +110,7 @@ class Error(ElementBase):
 
     def del_condition(self):
         """Remove the condition element."""
-        for child in self.xml.getchildren():
+        for child in self.xml:
             if "{%s}" % self.condition_ns in child.tag:
                 tag = child.tag.split('}', 1)[-1]
                 if tag in self.conditions:
@@ -130,6 +135,33 @@ class Error(ElementBase):
         """Remove the <text> element."""
         self._del_sub('{%s}text' % self.condition_ns)
         return self
+
+    def get_gone(self):
+        return self._get_sub_text('{%s}gone' % self.condition_ns, '')
+
+    def get_redirect(self):
+        return self._get_sub_text('{%s}redirect' % self.condition_ns, '')
+
+    def set_gone(self, value):
+        if value:
+            del self['condition']
+            return self._set_sub_text('{%s}gone' % self.condition_ns, value)
+        elif self['condition'] == 'gone':
+            del self['condition']
+
+    def set_redirect(self, value):
+        if value:
+            del self['condition']
+            ns = self.condition_ns
+            return self._set_sub_text('{%s}redirect' % ns, value)
+        elif self['condition'] == 'redirect':
+            del self['condition']
+
+    def del_gone(self):
+        self._del_sub('{%s}gone' % self.condition_ns)
+
+    def del_redirect(self):
+        self._del_sub('{%s}redirect' % self.condition_ns)
 
 
 # To comply with PEP8, method names now use underscores.

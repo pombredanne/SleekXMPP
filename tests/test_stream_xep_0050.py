@@ -1,4 +1,5 @@
 import time
+import logging
 import threading
 
 from sleekxmpp.test import *
@@ -16,6 +17,59 @@ class TestAdHocCommands(SleekTest):
 
     def tearDown(self):
         self.stream_close()
+
+    def testInitialPayloadCommand(self):
+        """Test a command with an initial payload."""
+
+        class TestPayload(ElementBase):
+            name = 'foo'
+            namespace = 'test'
+            interfaces = set(['bar'])
+            plugin_attrib = name
+
+        Command = self.xmpp['xep_0050'].stanza.Command
+        register_stanza_plugin(Command, TestPayload, iterable=True)
+
+        def handle_command(iq, session):
+            initial = session['payload']
+            logging.debug(initial)
+            new_payload = TestPayload()
+            if initial:
+                new_payload['bar'] = 'Received: %s' % initial['bar'] 
+            else:
+                new_payload['bar'] = 'Failed'
+
+            logging.debug(initial)
+
+            session['payload'] = new_payload
+            session['next'] = None
+            session['has_next'] = False
+
+            return session
+
+        self.xmpp['xep_0050'].add_command('tester@localhost', 'foo',
+                                          'Do Foo', handle_command)
+
+        self.recv("""
+          <iq id="11" type="set" to="tester@localhost" from="foo@bar">
+            <command xmlns="http://jabber.org/protocol/commands"
+                     node="foo"
+                     action="execute">
+              <foo xmlns="test" bar="baz" />
+            </command>
+          </iq>
+        """)
+
+        self.send("""
+          <iq id="11" type="result" to="foo@bar">
+            <command xmlns="http://jabber.org/protocol/commands"
+                     node="foo"
+                     status="completed"
+                     sessionid="_sessionid_">
+              <foo xmlns="test" bar="Received: baz" />
+            </command>
+          </iq>
+        """)
 
     def testZeroStepCommand(self):
         """Test running a command with no steps."""
@@ -504,7 +558,7 @@ class TestAdHocCommands(SleekTest):
         """)
 
         self.recv("""
-          <iq id="1" to="foo@example.com" type="result">
+          <iq id="1" from="foo@example.com" type="result">
             <command xmlns="http://jabber.org/protocol/commands"
                      node="test_client"
                      sessionid="_sessionid_"
@@ -532,7 +586,7 @@ class TestAdHocCommands(SleekTest):
         """)
 
         self.recv("""
-          <iq id="2" to="foo@example.com" type="result">
+          <iq id="2" from="foo@example.com" type="result">
             <command xmlns="http://jabber.org/protocol/commands"
                      node="test_client"
                      sessionid="_sessionid_"
@@ -560,7 +614,7 @@ class TestAdHocCommands(SleekTest):
         """)
 
         self.recv("""
-          <iq id="3" to="foo@example.com" type="result">
+          <iq id="3" from="foo@example.com" type="result">
             <command xmlns="http://jabber.org/protocol/commands"
                      node="test_client"
                      sessionid="_sessionid_"
@@ -680,6 +734,46 @@ class TestAdHocCommands(SleekTest):
 
         self.failUnless(results == ['foo'],
                 'Incomplete command workflow: %s' % results)
+
+    def testClientAPIErrorStrippedResponse(self):
+        """Test errors that don't include the command substanza."""
+        results = []
+
+        def handle_error(iq, session):
+            for item in session['custom_data']:
+                results.append(item)
+
+        session = {'custom_data': ['foo'],
+                   'error': handle_error}
+
+        self.xmpp['xep_0050'].start_command(
+                'foo@example.com',
+                'test_client',
+                session)
+
+        self.send("""
+          <iq id="1" to="foo@example.com" type="set">
+            <command xmlns="http://jabber.org/protocol/commands"
+                     node="test_client"
+                     action="execute" />
+          </iq>
+        """)
+
+        self.recv("""
+          <iq id="1" to="foo@example.com" type="error">
+            <error type='cancel'>
+              <item-not-found xmlns='urn:ietf:params:xml:ns:xmpp-stanzas' />
+            </error>
+          </iq>
+        """)
+
+        # Give the event queue time to process
+        time.sleep(0.3)
+
+        self.failUnless(results == ['foo'],
+                'Incomplete command workflow: %s' % results)
+
+
 
 
 

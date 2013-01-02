@@ -10,18 +10,20 @@ import logging
 import time
 
 from sleekxmpp import Iq
+from sleekxmpp.exceptions import IqError
 from sleekxmpp.xmlstream.handler import Callback
 from sleekxmpp.xmlstream.matcher import StanzaPath
 from sleekxmpp.xmlstream import register_stanza_plugin, JID
-from sleekxmpp.plugins.base import base_plugin
+from sleekxmpp.plugins import BasePlugin
 from sleekxmpp.plugins.xep_0050 import stanza
 from sleekxmpp.plugins.xep_0050 import Command
+from sleekxmpp.plugins.xep_0004 import Form
 
 
 log = logging.getLogger(__name__)
 
 
-class xep_0050(base_plugin):
+class XEP_0050(BasePlugin):
 
     """
     XEP-0050: Ad-Hoc Commands
@@ -76,32 +78,30 @@ class xep_0050(base_plugin):
         terminate_command -- Command user API: delete a command's session
     """
 
+    name = 'xep_0050'
+    description = 'XEP-0050: Ad-Hoc Commands'
+    dependencies = set(['xep_0030', 'xep_0004'])
+    stanza = stanza
+    default_config = {
+        'threaded': True,
+        'session_db': None
+    }
+
     def plugin_init(self):
         """Start the XEP-0050 plugin."""
-        self.xep = '0050'
-        self.description = 'Ad-Hoc Commands'
-        self.stanza = stanza
+        self.sessions = self.session_db
+        if self.sessions is None:
+            self.sessions = {}
 
-        self.threaded = self.config.get('threaded', True)
         self.commands = {}
-        self.sessions = self.config.get('session_db', {})
 
         self.xmpp.register_handler(
                 Callback("Ad-Hoc Execute",
                          StanzaPath('iq@type=set/command'),
                          self._handle_command))
 
-        self.xmpp.register_handler(
-                Callback("Ad-Hoc Result",
-                         StanzaPath('iq@type=result/command'),
-                         self._handle_command_result))
-
-        self.xmpp.register_handler(
-                Callback("Ad-Hoc Error",
-                         StanzaPath('iq@type=error/command'),
-                         self._handle_command_result))
-
-        register_stanza_plugin(Iq, stanza.Command)
+        register_stanza_plugin(Iq, Command)
+        register_stanza_plugin(Command, Form)
 
         self.xmpp.add_event_handler('command_execute',
                                     self._handle_command_start,
@@ -116,10 +116,22 @@ class xep_0050(base_plugin):
                                     self._handle_command_complete,
                                     threaded=self.threaded)
 
-    def post_init(self):
-        """Handle cross-plugin interactions."""
-        base_plugin.post_init(self)
+    def plugin_end(self):
+        self.xmpp.del_event_handler('command_execute',
+                                    self._handle_command_start)
+        self.xmpp.del_event_handler('command_next',
+                                    self._handle_command_next)
+        self.xmpp.del_event_handler('command_cancel',
+                                    self._handle_command_cancel)
+        self.xmpp.del_event_handler('command_complete',
+                                    self._handle_command_complete)
+        self.xmpp.remove_handler('Ad-Hoc Execute')
+        self.xmpp['xep_0030'].del_feature(feature=Command.namespace)
+        self.xmpp['xep_0030'].set_items(node=Command.namespace, items=tuple())
+
+    def session_bind(self, jid):
         self.xmpp['xep_0030'].add_feature(Command.namespace)
+        self.xmpp['xep_0030'].set_items(node=Command.namespace, items=tuple())
 
     def set_backend(self, db):
         """
@@ -156,7 +168,7 @@ class xep_0050(base_plugin):
         Access control may be implemented in the provided handler.
 
         Command workflow is done across a sequence of command handlers. The
-        first handler is given the intial Iq stanza of the request in order
+        first handler is given the initial Iq stanza of the request in order
         to support access control. Subsequent handlers are given only the
         payload items of the command. All handlers will receive the command's
         session data.
@@ -171,15 +183,9 @@ class xep_0050(base_plugin):
         """
         if jid is None:
             jid = self.xmpp.boundjid
-        elif isinstance(jid, str):
+        elif not isinstance(jid, JID):
             jid = JID(jid)
         item_jid = jid.full
-
-        # Client disco uses only the bare JID
-        if self.xmpp.is_component:
-            jid = jid.full
-        else:
-            jid = jid.bare
 
         self.xmpp['xep_0030'].add_identity(category='automation',
                                            itype='command-list',
@@ -220,15 +226,25 @@ class xep_0050(base_plugin):
         key = (iq['to'].full, node)
         name, handler = self.commands.get(key, ('Not found', None))
         if not handler:
-            log.debug('Command not found: %s, %s' % (key, self.commands))
+            log.debug('Command not found: %s, %s', key, self.commands)
+
+        payload = []
+        for stanza in iq['command']['substanzas']:
+            payload.append(stanza)
+
+        if len(payload) == 1:
+            payload = payload[0]
+
+        interfaces = set([item.plugin_attrib for item in payload])
+        payload_classes = set([item.__class__ for item in payload])
 
         initial_session = {'id': sessionid,
                            'from': iq['from'],
                            'to': iq['to'],
                            'node': node,
-                           'payload': None,
-                           'interfaces': '',
-                           'payload_classes': None,
+                           'payload': payload,
+                           'interfaces': interfaces,
+                           'payload_classes': payload_classes,
                            'notes': None,
                            'has_next': False,
                            'allow_complete': False,
@@ -278,11 +294,19 @@ class xep_0050(base_plugin):
         sessionid = session['id']
 
         payload = session['payload']
+        if payload is None:
+            payload = []
         if not isinstance(payload, list):
             payload = [payload]
 
-        session['interfaces'] = [item.plugin_attrib for item in payload]
-        session['payload_classes'] = [item.__class__ for item in payload]
+        interfaces = session.get('interfaces', set())
+        payload_classes = session.get('payload_classes', set())
+
+        interfaces.update(set([item.plugin_attrib for item in payload]))
+        payload_classes.update(set([item.__class__ for item in payload]))
+
+        session['interfaces'] = interfaces
+        session['payload_classes'] = payload_classes
 
         self.sessions[sessionid] = session
 
@@ -377,7 +401,6 @@ class xep_0050(base_plugin):
 
         del self.sessions[sessionid]
 
-
     # =================================================================
     # Client side (command user) API
 
@@ -408,7 +431,7 @@ class xep_0050(base_plugin):
                                                **kwargs)
 
     def send_command(self, jid, node, ifrom=None, action='execute',
-                    payload=None, sessionid=None, **kwargs):
+                    payload=None, sessionid=None, flow=False, **kwargs):
         """
         Create and send a command stanza, without using the provided
         workflow management APIs.
@@ -422,6 +445,10 @@ class xep_0050(base_plugin):
             payload   -- Either a list of payload items, or a single
                          payload item such as a data form.
             sessionid -- The current session's ID value.
+            flow      -- If True, process the Iq result using the
+                         command workflow methods contained in the
+                         session instead of returning the response
+                         stanza itself. Defaults to False.
             block     -- Specify if the send call will block until a
                          response is received, or a timeout occurs.
                          Defaults to True.
@@ -431,13 +458,12 @@ class xep_0050(base_plugin):
                          sleekxmpp.xmlstream.RESPONSE_TIMEOUT
             callback  -- Optional reference to a stream handler
                          function. Will be executed when a reply
-                         stanza is received.
+                         stanza is received if flow=False.
         """
         iq = self.xmpp.Iq()
         iq['type'] = 'set'
         iq['to'] = jid
-        if ifrom:
-            iq['from'] = ifrom
+        iq['from'] = ifrom
         iq['command']['node'] = node
         iq['command']['action'] = action
         if sessionid is not None:
@@ -447,13 +473,24 @@ class xep_0050(base_plugin):
                 payload = [payload]
             for item in payload:
                 iq['command'].append(item)
-        return iq.send(**kwargs)
+        if not flow:
+            return iq.send(**kwargs)
+        else:
+            if kwargs.get('block', True):
+                try:
+                    result = iq.send(**kwargs)
+                except IqError as err:
+                    result = err.iq
+                self._handle_command_result(result)
+            else:
+                iq.send(block=False, callback=self._handle_command_result)
 
-    def start_command(self, jid, node, session, ifrom=None):
+    def start_command(self, jid, node, session, ifrom=None, block=False):
         """
         Initiate executing a command provided by a remote agent.
 
-        The workflow provided is always non-blocking.
+        The default workflow provided is non-blocking, but a blocking
+        version may be used with block=True.
 
         The provided session dictionary should contain:
             next  -- A handler for processing the command result.
@@ -465,23 +502,40 @@ class xep_0050(base_plugin):
             node    -- The node for the desired command.
             session -- A dictionary of relevant session data.
             ifrom   -- Optionally specify the sender's JID.
+            block   -- If True, block execution until a result
+                       is received. Defaults to False.
         """
         session['jid'] = jid
         session['node'] = node
         session['timestamp'] = time.time()
-        session['payload'] = None
+        session['block'] = block
+        if 'payload' not in session:
+            session['payload'] = None
+
         iq = self.xmpp.Iq()
         iq['type'] = 'set'
         iq['to'] = jid
-        if ifrom:
-            iq['from'] = ifrom
-            session['from'] = ifrom
+        iq['from'] = ifrom
+        session['from'] = ifrom
         iq['command']['node'] = node
         iq['command']['action'] = 'execute'
+        if session['payload'] is not None:
+            payload = session['payload']
+            if not isinstance(payload, list):
+                payload = list(payload)
+            for stanza in payload:
+                iq['command'].append(stanza)
         sessionid = 'client:pending_' + iq['id']
         session['id'] = sessionid
         self.sessions[sessionid] = session
-        iq.send(block=False)
+        if session['block']:
+            try:
+                result = iq.send(block=True)
+            except IqError as err:
+                result = err.iq
+            self._handle_command_result(result)
+        else:
+            iq.send(block=False, callback=self._handle_command_result)
 
     def continue_command(self, session):
         """
@@ -499,7 +553,9 @@ class xep_0050(base_plugin):
                           ifrom=session.get('from', None),
                           action='next',
                           payload=session.get('payload', None),
-                          sessionid=session['id'])
+                          sessionid=session['id'],
+                          flow=True,
+                          block=session['block'])
 
     def cancel_command(self, session):
         """
@@ -517,7 +573,9 @@ class xep_0050(base_plugin):
                           ifrom=session.get('from', None),
                           action='cancel',
                           payload=session.get('payload', None),
-                          sessionid=session['id'])
+                          sessionid=session['id'],
+                          flow=True,
+                          block=session['block'])
 
     def complete_command(self, session):
         """
@@ -535,7 +593,9 @@ class xep_0050(base_plugin):
                           ifrom=session.get('from', None),
                           action='complete',
                           payload=session.get('payload', None),
-                          sessionid=session['id'])
+                          sessionid=session['id'],
+                          flow=True,
+                          block=session['block'])
 
     def terminate_command(self, session):
         """
@@ -546,10 +606,11 @@ class xep_0050(base_plugin):
             session -- All stored data relevant to the current
                        command session.
         """
+        sessionid = 'client:' + session['id']
         try:
-            del self.sessions[session['id']]
-        except:
-            pass
+            del self.sessions[sessionid]
+        except Exception as e:
+            log.error("Error deleting adhoc command session: %s" % e.message)
 
     def _handle_command_result(self, iq):
         """
@@ -589,5 +650,5 @@ class xep_0050(base_plugin):
         elif iq['type'] == 'error':
             self.terminate_command(session)
 
-        if iq['command']['status']  == 'completed':
+        if iq['command']['status'] == 'completed':
             self.terminate_command(session)

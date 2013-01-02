@@ -1,35 +1,35 @@
+# -*- coding: utf-8 -*-
 """
-    SleekXMPP: The Sleek XMPP Library
-    Copyright (C) 2010  Nathanael C. Fritz
-    This file is part of SleekXMPP.
+    sleekxmpp.clientxmpp
+    ~~~~~~~~~~~~~~~~~~~~
 
-    See the file LICENSE for copying permission.
+    This module provides XMPP functionality that
+    is specific to client connections.
+
+    Part of SleekXMPP: The Sleek XMPP Library
+
+    :copyright: (c) 2011 Nathanael C. Fritz
+    :license: MIT, see LICENSE for more details
 """
 
 from __future__ import absolute_import, unicode_literals
 
 import logging
-import base64
-import sys
-import hashlib
-import random
-import threading
 
-from sleekxmpp import plugins
-from sleekxmpp import stanza
+from sleekxmpp.stanza import StreamFeatures
 from sleekxmpp.basexmpp import BaseXMPP
-from sleekxmpp.stanza import Message, Presence, Iq
-from sleekxmpp.xmlstream import XMLStream, RestartStream
-from sleekxmpp.xmlstream import StanzaBase, ET
-from sleekxmpp.xmlstream.matcher import *
-from sleekxmpp.xmlstream.handler import *
+from sleekxmpp.exceptions import XMPPError
+from sleekxmpp.xmlstream import XMLStream
+from sleekxmpp.xmlstream.matcher import StanzaPath, MatchXPath
+from sleekxmpp.xmlstream.handler import Callback
 
 # Flag indicating if DNS SRV records are available for use.
-SRV_SUPPORT = True
 try:
     import dns.resolver
-except:
-    SRV_SUPPORT = False
+except ImportError:
+    DNSPYTHON = False
+else:
+    DNSPYTHON = True
 
 
 log = logging.getLogger(__name__)
@@ -38,61 +38,66 @@ log = logging.getLogger(__name__)
 class ClientXMPP(BaseXMPP):
 
     """
-    SleekXMPP's client class.
+    SleekXMPP's client class. (Use only for good, not for evil.)
 
-    Use only for good, not for evil.
+    Typical use pattern:
 
-    Attributes:
+    .. code-block:: python
 
-    Methods:
-        connect          -- Overrides XMLStream.connect.
-        del_roster_item  -- Delete a roster item.
-        get_roster       -- Retrieve the roster from the server.
-        register_feature -- Register a stream feature.
-        update_roster    -- Update a roster item.
+        xmpp = ClientXMPP('user@server.tld/resource', 'password')
+        # ... Register plugins and event handlers ...
+        xmpp.connect()
+        xmpp.process(block=False) # block=True will block the current
+                                  # thread. By default, block=False
+
+    :param jid: The JID of the XMPP user account.
+    :param password: The password for the XMPP user account.
+    :param ssl: **Deprecated.**
+    :param plugin_config: A dictionary of plugin configurations.
+    :param plugin_whitelist: A list of approved plugins that
+                    will be loaded when calling
+                    :meth:`~sleekxmpp.basexmpp.BaseXMPP.register_plugins()`.
+    :param escape_quotes: **Deprecated.**
     """
 
-    def __init__(self, jid, password, ssl=False, plugin_config={},
-                 plugin_whitelist=[], escape_quotes=True):
-        """
-        Create a new SleekXMPP client.
+    def __init__(self, jid, password, plugin_config={}, plugin_whitelist=[],
+                 escape_quotes=True, sasl_mech=None, lang='en'):
+        BaseXMPP.__init__(self, jid, 'jabber:client')
 
-        Arguments:
-            jid              -- The JID of the XMPP user account.
-            password         -- The password for the XMPP user account.
-            ssl              -- Deprecated.
-            plugin_config    -- A dictionary of plugin configurations.
-            plugin_whitelist -- A list of approved plugins that will be loaded
-                                when calling register_plugins.
-            escape_quotes    -- Deprecated.
-        """
-        BaseXMPP.__init__(self, 'jabber:client')
-
-        self.set_jid(jid)
-        self.password = password
         self.escape_quotes = escape_quotes
         self.plugin_config = plugin_config
         self.plugin_whitelist = plugin_whitelist
-        self.srv_support = SRV_SUPPORT
+        self.default_port = 5222
+        self.default_lang = lang
 
-        self.session_started_event = threading.Event()
-        self.session_started_event.clear()
+        self.credentials = {}
 
-        self.stream_header = "<stream:stream to='%s' %s %s version='1.0'>" % (
+        self.password = password
+
+        self.stream_header = "<stream:stream to='%s' %s %s %s %s>" % (
                 self.boundjid.host,
                 "xmlns:stream='%s'" % self.stream_ns,
-                "xmlns='%s'" % self.default_ns)
+                "xmlns='%s'" % self.default_ns,
+                "xml:lang='%s'" % self.default_lang,
+                "version='1.0'")
         self.stream_footer = "</stream:stream>"
 
-        self.features = []
-        self.registered_features = []
+        self.features = set()
+        self._stream_feature_handlers = {}
+        self._stream_feature_order = []
+
+        self.dns_service = 'xmpp-client'
 
         #TODO: Use stream state here
         self.authenticated = False
         self.sessionstarted = False
         self.bound = False
         self.bindfail = False
-        self.add_event_handler('connected', self.handle_connected)
+
+        self.add_event_handler('connected', self._reset_connection_state)
+        self.add_event_handler('session_bind', self._handle_session_bind)
+
+        self.register_stanza(StreamFeatures)
 
         self.register_handler(
                 Callback('Stream Features',
@@ -100,343 +105,218 @@ class ClientXMPP(BaseXMPP):
                          self._handle_stream_features))
         self.register_handler(
                 Callback('Roster Update',
-                         MatchXPath('{%s}iq/{%s}query' % (
-                             self.default_ns,
-                             'jabber:iq:roster')),
+                         StanzaPath('iq@type=set/roster'),
                          self._handle_roster))
 
-        self.register_feature(
-            "<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls' />",
-            self._handle_starttls, True)
-        self.register_feature(
-            "<mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />",
-            self._handle_sasl_auth, True)
-        self.register_feature(
-            "<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind' />",
-            self._handle_bind_resource)
-        self.register_feature(
-            "<session xmlns='urn:ietf:params:xml:ns:xmpp-session' />",
-            self._handle_start_session)
+        # Setup default stream features
+        self.register_plugin('feature_starttls')
+        self.register_plugin('feature_bind')
+        self.register_plugin('feature_session')
+        self.register_plugin('feature_rosterver')
+        self.register_plugin('feature_preapproval')
+        self.register_plugin('feature_mechanisms')
 
-    def handle_connected(self, event=None):
-        #TODO: Use stream state here
-        self.authenticated = False
-        self.sessionstarted = False
-        self.bound = False
-        self.bindfail = False
-        self.schedule("session timeout checker", 15,
-                      self._session_timeout_check)
+        if sasl_mech:
+            self['feature_mechanisms'].use_mech = sasl_mech
 
-    def _session_timeout_check(self):
-        if not self.session_started_event.isSet():
-            log.debug("Session start has taken more than 15 seconds")
-            self.disconnect(reconnect=self.auto_reconnect)
+    @property
+    def password(self):
+        return self.credentials.get('password', '')
 
-    def connect(self, address=tuple(), reattempt=True, use_tls=True):
-        """
-        Connect to the XMPP server.
+    @password.setter
+    def password(self, value):
+        self.credentials['password'] = value
+
+    def connect(self, address=tuple(), reattempt=True,
+                use_tls=True, use_ssl=False):
+        """Connect to the XMPP server.
 
         When no address is given, a SRV lookup for the server will
         be attempted. If that fails, the server user in the JID
         will be used.
 
-        Arguments:
-            address   -- A tuple containing the server's host and port.
-            reattempt -- If True, reattempt the connection if an
-                         error occurs. Defaults to True.
-            use_tls   -- Indicates if TLS should be used for the
-                         connection. Defaults to True.
+        :param address   -- A tuple containing the server's host and port.
+        :param reattempt: If ``True``, repeat attempting to connect if an
+                         error occurs. Defaults to ``True``.
+        :param use_tls: Indicates if TLS should be used for the
+                        connection. Defaults to ``True``.
+        :param use_ssl: Indicates if the older SSL connection method
+                        should be used. Defaults to ``False``.
         """
         self.session_started_event.clear()
-        if not address or len(address) < 2:
-            if not self.srv_support:
-                log.debug("Did not supply (address, port) to connect" + \
-                              " to and no SRV support is installed" + \
-                              " (http://www.dnspython.org)." + \
-                              " Continuing to attempt connection, using" + \
-                              " server hostname from JID.")
-            else:
-                log.debug("Since no address is supplied," + \
-                              "attempting SRV lookup.")
-                try:
-                    xmpp_srv = "_xmpp-client._tcp.%s" % self.boundjid.host
-                    answers = dns.resolver.query(xmpp_srv, dns.rdatatype.SRV)
-                except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-                    log.debug("No appropriate SRV record found." + \
-                                  " Using JID server name.")
-                except (dns.exception.Timeout,):
-                    log.debug("DNS resolution timed out.")
-                else:
-                    # Pick a random server, weighted by priority.
 
-                    addresses = {}
-                    intmax = 0
-                    for answer in answers:
-                        intmax += answer.priority
-                        addresses[intmax] = (answer.target.to_text()[:-1],
-                                             answer.port)
-                    #python3 returns a generator for dictionary keys
-                    priorities = [x for x in addresses.keys()]
-                    priorities.sort()
-
-                    picked = random.randint(0, intmax)
-                    for priority in priorities:
-                        if picked <= priority:
-                            address = addresses[priority]
-                            break
-
-        if not address:
-            # If all else fails, use the server from the JID.
+        # If an address was provided, disable using DNS SRV lookup;
+        # otherwise, use the domain from the client JID with the standard
+        # XMPP client port and allow SRV lookup.
+        if address:
+            self.dns_service = None
+        else:
             address = (self.boundjid.host, 5222)
+            self.dns_service = 'xmpp-client'
+
+        self._expected_server_name = self.boundjid.host
 
         return XMLStream.connect(self, address[0], address[1],
-                                 use_tls=use_tls, reattempt=reattempt)
+                                 use_tls=use_tls, use_ssl=use_ssl,
+                                 reattempt=reattempt)
 
-    def register_feature(self, mask, pointer, breaker=False):
-        """
-        Register a stream feature.
+    def register_feature(self, name, handler, restart=False, order=5000):
+        """Register a stream feature handler.
 
-        Arguments:
-            mask    -- An XML string matching the feature's element.
-            pointer -- The function to execute if the feature is received.
-            breaker -- Indicates if feature processing should halt with
-                       this feature. Defaults to False.
+        :param name: The name of the stream feature.
+        :param handler: The function to execute if the feature is received.
+        :param restart: Indicates if feature processing should halt with
+                        this feature. Defaults to ``False``.
+        :param order: The relative ordering in which the feature should
+                      be negotiated. Lower values will be attempted
+                      earlier when available.
         """
-        self.registered_features.append((MatchXMLMask(mask),
-                                         pointer,
-                                         breaker))
+        self._stream_feature_handlers[name] = (handler, restart)
+        self._stream_feature_order.append((order, name))
+        self._stream_feature_order.sort()
 
-    def update_roster(self, jid, name=None, subscription=None, groups=[]):
-        """
-        Add or change a roster item.
+    def unregister_feature(self, name, order):
+        if name in self._stream_feature_handlers:
+            del self._stream_feature_handlers[name]
+        self._stream_feature_order.remove((order, name))
+        self._stream_feature_order.sort()
 
-        Arguments:
-            jid          -- The JID of the entry to modify.
-            name         -- The user's nickname for this JID.
-            subscription -- The subscription status. May be one of
-                            'to', 'from', 'both', or 'none'. If set
-                            to 'remove', the entry will be deleted.
-            groups       -- The roster groups that contain this item.
+    def update_roster(self, jid, **kwargs):
+        """Add or change a roster item.
+
+        :param jid: The JID of the entry to modify.
+        :param name: The user's nickname for this JID.
+        :param subscription: The subscription status. May be one of
+                             ``'to'``, ``'from'``, ``'both'``, or
+                             ``'none'``. If set to ``'remove'``,
+                             the entry will be deleted.
+        :param groups: The roster groups that contain this item.
+        :param block: Specify if the roster request will block
+                      until a response is received, or a timeout
+                      occurs. Defaults to ``True``.
+        :param timeout: The length of time (in seconds) to wait
+                        for a response before continuing if blocking
+                        is used. Defaults to
+            :attr:`~sleekxmpp.xmlstream.xmlstream.XMLStream.response_timeout`.
+        :param callback: Optional reference to a stream handler function.
+                         Will be executed when the roster is received.
+                         Implies ``block=False``.
         """
-        iq = self.Iq()._set_stanza_values({'type': 'set'})
-        iq['roster']['items'] = {jid: {'name': name,
-                                       'subscription': subscription,
-                                       'groups': groups}}
-        response = iq.send()
-        return response['type'] == 'result'
+        current = self.client_roster[jid]
+
+        name = kwargs.get('name', current['name'])
+        subscription = kwargs.get('subscription', current['subscription'])
+        groups = kwargs.get('groups', current['groups'])
+
+        block = kwargs.get('block', True)
+        timeout = kwargs.get('timeout', None)
+        callback = kwargs.get('callback', None)
+
+        return self.client_roster.update(jid, name, subscription, groups,
+                                         block, timeout, callback)
 
     def del_roster_item(self, jid):
-        """
-        Remove an item from the roster by setting its subscription
-        status to 'remove'.
+        """Remove an item from the roster.
 
-        Arguments:
-            jid -- The JID of the item to remove.
-        """
-        return self.update_roster(jid, subscription='remove')
+        This is done by setting its subscription status to ``'remove'``.
 
-    def get_roster(self):
-        """Request the roster from the server."""
-        iq = self.Iq()._set_stanza_values({'type': 'get'}).enable('roster')
-        response = iq.send()
-        self._handle_roster(response, request=True)
+        :param jid: The JID of the item to remove.
+        """
+        return self.client_roster.remove(jid)
+
+    def get_roster(self, block=True, timeout=None, callback=None):
+        """Request the roster from the server.
+
+        :param block: Specify if the roster request will block until a
+                      response is received, or a timeout occurs.
+                      Defaults to ``True``.
+        :param timeout: The length of time (in seconds) to wait for a response
+                        before continuing if blocking is used.
+                        Defaults to
+            :attr:`~sleekxmpp.xmlstream.xmlstream.XMLStream.response_timeout`.
+        :param callback: Optional reference to a stream handler function. Will
+                         be executed when the roster is received.
+                         Implies ``block=False``.
+        """
+        iq = self.Iq()
+        iq['type'] = 'get'
+        iq.enable('roster')
+        if 'rosterver' in self.features:
+            iq['roster']['ver'] = self.client_roster.version
+
+        if not block and callback is None:
+            callback = lambda resp: self._handle_roster(resp)
+
+        response = iq.send(block, timeout, callback)
+        self.event('roster_received', response)
+
+        if block:
+            self._handle_roster(response)
+            return response
+
+    def _reset_connection_state(self, event=None):
+        #TODO: Use stream state here
+        self.authenticated = False
+        self.sessionstarted = False
+        self.bound = False
+        self.bindfail = False
+        self.features = set()
 
     def _handle_stream_features(self, features):
+        """Process the received stream features.
+
+        :param features: The features stanza.
         """
-        Process the received stream features.
+        for order, name in self._stream_feature_order:
+            if name in features['features']:
+                handler, restart = self._stream_feature_handlers[name]
+                if handler(features) and restart:
+                    # Don't continue if the feature requires
+                    # restarting the XML stream.
+                    return True
+        log.debug('Finished processing stream features.')
+        self.event('stream_negotiated')
 
-        Arguments:
-            features -- The features stanza.
+    def _handle_roster(self, iq):
+        """Update the roster after receiving a roster stanza.
+
+        :param iq: The roster stanza.
         """
-        # Record all of the features.
-        self.features = []
-        for sub in features.xml:
-            self.features.append(sub.tag)
+        if iq['type'] == 'set':
+            if iq['from'].bare and iq['from'].bare != self.boundjid.bare:
+                raise XMPPError(condition='service-unavailable')
 
-        # Process the features.
-        for sub in features.xml:
-            for feature in self.registered_features:
-                mask, handler, halt = feature
-                if mask.match(sub):
-                    if handler(sub) and halt:
-                        # Don't continue if the feature was
-                        # marked as a breaker.
-                        return True
+        roster = self.client_roster
+        if iq['roster']['ver']:
+            roster.version = iq['roster']['ver']
+        items = iq['roster']['items']
 
-    def _handle_starttls(self, xml):
-        """
-        Handle notification that the server supports TLS.
+        valid_subscriptions = ('to', 'from', 'both', 'none', 'remove')
+        for jid, item in items.items():
+            if item['subscription'] in valid_subscriptions:
+                roster[jid]['name'] = item['name']
+                roster[jid]['groups'] = item['groups']
+                roster[jid]['from'] = item['subscription'] in ('from', 'both')
+                roster[jid]['to'] = item['subscription'] in ('to', 'both')
+                roster[jid]['pending_out'] = (item['ask'] == 'subscribe')
 
-        Arguments:
-            xml -- The STARTLS proceed element.
-        """
-        if not self.use_tls:
-            return False
-        elif not self.authenticated and self.ssl_support:
-            tls_ns = 'urn:ietf:params:xml:ns:xmpp-tls'
-            self.add_handler("<proceed xmlns='%s' />" % tls_ns,
-                             self._handle_tls_start,
-                             name='TLS Proceed',
-                             instream=True)
-            self.send_xml(xml)
-            return True
-        else:
-            log.warning("The module tlslite is required to log in" +\
-                            " to some servers, and has not been found.")
-            return False
-
-    def _handle_tls_start(self, xml):
-        """
-        Handle encrypting the stream using TLS.
-
-        Restarts the stream.
-        """
-        log.debug("Starting TLS")
-        if self.start_tls():
-            raise RestartStream()
-
-    def _handle_sasl_auth(self, xml):
-        """
-        Handle authenticating using SASL.
-
-        Arguments:
-            xml -- The SASL mechanisms stanza.
-        """
-        if self.use_tls and \
-           '{urn:ietf:params:xml:ns:xmpp-tls}starttls' in self.features:
-            return False
-
-        log.debug("Starting SASL Auth")
-        sasl_ns = 'urn:ietf:params:xml:ns:xmpp-sasl'
-        self.add_handler("<success xmlns='%s' />" % sasl_ns,
-                         self._handle_auth_success,
-                         name='SASL Sucess',
-                         instream=True)
-        self.add_handler("<failure xmlns='%s' />" % sasl_ns,
-                         self._handle_auth_fail,
-                         name='SASL Failure',
-                         instream=True)
-
-        sasl_mechs = xml.findall('{%s}mechanism' % sasl_ns)
-        if sasl_mechs:
-            for sasl_mech in sasl_mechs:
-                self.features.append("sasl:%s" % sasl_mech.text)
-            if 'sasl:PLAIN' in self.features and self.boundjid.user:
-                if sys.version_info < (3, 0):
-                    user = bytes(self.boundjid.user)
-                    password = bytes(self.password)
-                else:
-                    user = bytes(self.boundjid.user, 'utf-8')
-                    password = bytes(self.password, 'utf-8')
-
-                auth = base64.b64encode(b'\x00' + user + \
-                                        b'\x00' + password).decode('utf-8')
-
-                self.send("<auth xmlns='%s' mechanism='PLAIN'>%s</auth>" % (
-                    sasl_ns,
-                    auth))
-            elif 'sasl:ANONYMOUS' in self.features and not self.boundjid.user:
-                self.send("<auth xmlns='%s' mechanism='%s' />" % (
-                    sasl_ns,
-                    'ANONYMOUS'))
-            else:
-                log.error("No appropriate login method.")
-                self.disconnect()
-        return True
-
-    def _handle_auth_success(self, xml):
-        """
-        SASL authentication succeeded. Restart the stream.
-
-        Arguments:
-            xml -- The SASL authentication success element.
-        """
-        self.authenticated = True
-        self.features = []
-        raise RestartStream()
-
-    def _handle_auth_fail(self, xml):
-        """
-        SASL authentication failed. Disconnect and shutdown.
-
-        Arguments:
-            xml -- The SASL authentication failure element.
-        """
-        log.info("Authentication failed.")
-        self.event("failed_auth", direct=True)
-        self.disconnect()
-
-    def _handle_bind_resource(self, xml):
-        """
-        Handle requesting a specific resource.
-
-        Arguments:
-            xml -- The bind feature element.
-        """
-        log.debug("Requesting resource: %s" % self.boundjid.resource)
-        xml.clear()
-        iq = self.Iq(stype='set')
-        if self.boundjid.resource:
-            res = ET.Element('resource')
-            res.text = self.boundjid.resource
-            xml.append(res)
-        iq.append(xml)
-        response = iq.send()
-
-        bind_ns = 'urn:ietf:params:xml:ns:xmpp-bind'
-        self.set_jid(response.xml.find('{%s}bind/{%s}jid' % (bind_ns,
-                                                             bind_ns)).text)
-        self.bound = True
-        log.info("Node set to: %s" % self.boundjid.full)
-        session_ns = 'urn:ietf:params:xml:ns:xmpp-session'
-        if "{%s}session" % session_ns not in self.features or self.bindfail:
-            log.debug("Established Session")
-            self.sessionstarted = True
-            self.session_started_event.set()
-            self.event("session_start")
-
-    def _handle_start_session(self, xml):
-        """
-        Handle the start of the session.
-
-        Arguments:
-            xml -- The session feature element.
-        """
-        if self.authenticated and self.bound:
-            iq = self.makeIqSet(xml)
-            response = iq.send()
-            log.debug("Established Session")
-            self.sessionstarted = True
-            self.session_started_event.set()
-            self.event("session_start")
-        else:
-            # Bind probably hasn't happened yet.
-            self.bindfail = True
-
-    def _handle_roster(self, iq, request=False):
-        """
-        Update the roster after receiving a roster stanza.
-
-        Arguments:
-            iq      -- The roster stanza.
-            request -- Indicates if this stanza is a response
-                       to a request for the roster.
-        """
-        if iq['type'] == 'set' or (iq['type'] == 'result' and request):
-            for jid in iq['roster']['items']:
-                if not jid in self.roster:
-                    self.roster[jid] = {'groups': [],
-                                        'name': '',
-                                        'subscription': 'none',
-                                        'presence': {},
-                                        'in_roster': True}
-                self.roster[jid].update(iq['roster']['items'][jid])
+                roster[jid].save(remove=(item['subscription'] == 'remove'))
 
         self.event("roster_update", iq)
         if iq['type'] == 'set':
-            iq.reply()
-            iq.enable('roster')
-            iq.send()
+            resp = self.Iq(stype='result',
+                           sto=iq['from'],
+                           sid=iq['id'])
+            resp.enable('roster')
+            resp.send()
+
+    def _handle_session_bind(self, jid):
+        """Set the client roster to the JID set by the server.
+
+        :param :class:`sleekxmpp.xmlstream.jid.JID` jid: The bound JID as
+            dictated by the server. The same as :attr:`boundjid`.
+        """
+        self.client_roster = self.roster[jid]
 
 
 # To comply with PEP8, method names now use underscores.

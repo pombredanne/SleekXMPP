@@ -1,5 +1,6 @@
 import time
 
+from sleekxmpp import Message
 from sleekxmpp.test import *
 from sleekxmpp.xmlstream.handler import *
 from sleekxmpp.xmlstream.matcher import *
@@ -90,7 +91,10 @@ class TestHandlers(SleekTest):
             iq['id'] = 'test2'
             iq['type'] = 'set'
             iq['query'] = 'test2'
-            reply = iq.send(block=True, timeout=0)
+            try:
+                reply = iq.send(block=True, timeout=0)
+            except IqTimeout:
+                pass
 
         self.xmpp.add_event_handler('message', waiter_handler, threaded=True)
 
@@ -103,6 +107,9 @@ class TestHandlers(SleekTest):
         iq['type'] = 'set'
         iq['query'] = 'test2'
         self.send(iq)
+
+        # Give the event queue time to process.
+        time.sleep(0.1)
 
         # Check that the waiter is no longer registered
         waiter_exists = self.xmpp.removeHandler('IqWait_test2')
@@ -145,6 +152,79 @@ class TestHandlers(SleekTest):
 
         self.failUnless(events == ['foo'],
                 "Iq callback was not executed: %s" % events)
+
+    def testIqTimeoutCallback(self):
+        """Test that iq.send(tcallback=handle_foo, timeout_callback=handle_timeout) works."""
+        events = []
+
+        def handle_foo(iq):
+            events.append('foo')
+
+        def handle_timeout(iq):
+            events.append('timeout')
+
+        iq = self.Iq()
+        iq['type'] = 'get'
+        iq['id'] = 'test-foo'
+        iq['to'] = 'user@localhost'
+        iq['query'] = 'foo'
+        iq.send(callback=handle_foo, timeout_callback=handle_timeout, timeout=0.05)
+
+        self.send("""
+          <iq type="get" id="test-foo" to="user@localhost">
+            <query xmlns="foo" />
+          </iq>
+        """)
+
+        # Give event queue time to process
+        time.sleep(1)
+
+        self.failUnless(events == ['timeout'],
+                "Iq timeout was not executed: %s" % events)
+
+    def testMultipleHandlersForStanza(self):
+        """
+        Test that multiple handlers for a single stanza work
+        without clobbering each other.
+        """
+
+        def handler_1(msg):
+            msg.reply("Handler 1: %s" % msg['body']).send()
+
+        def handler_2(msg):
+            msg.reply("Handler 2: %s" % msg['body']).send()
+
+        def handler_3(msg):
+            msg.reply("Handler 3: %s" % msg['body']).send()
+
+        self.xmpp.add_event_handler('message', handler_1)
+        self.xmpp.add_event_handler('message', handler_2)
+        self.xmpp.add_event_handler('message', handler_3)
+
+        self.recv("""
+          <message to="tester@localhost" from="user@example.com">
+            <body>Testing</body>
+          </message>
+        """)
+
+
+        # This test is brittle, depending on the fact that handlers
+        # will be checked in the order they are registered.
+        self.send("""
+          <message to="user@example.com">
+            <body>Handler 1: Testing</body>
+          </message>
+        """)
+        self.send("""
+          <message to="user@example.com">
+            <body>Handler 2: Testing</body>
+          </message>
+        """)
+        self.send("""
+          <message to="user@example.com">
+            <body>Handler 3: Testing</body>
+          </message>
+        """)
 
 
 suite = unittest.TestLoader().loadTestsFromTestCase(TestHandlers)

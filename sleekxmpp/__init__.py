@@ -10,10 +10,10 @@ from sleekxmpp.basexmpp import BaseXMPP
 from sleekxmpp.clientxmpp import ClientXMPP
 from sleekxmpp.componentxmpp import ComponentXMPP
 from sleekxmpp.stanza import Message, Presence, Iq
+from sleekxmpp.jid import JID, InvalidJID
 from sleekxmpp.xmlstream.handler import *
 from sleekxmpp.xmlstream import XMLStream, RestartStream
 from sleekxmpp.xmlstream.matcher import *
 from sleekxmpp.xmlstream.stanzabase import StanzaBase, ET
 
-__version__ = '1.0beta5'
-__version_info__ = (1, 0, 0, 'beta5', 0)
+from sleekxmpp.version import __version__, __version_info__

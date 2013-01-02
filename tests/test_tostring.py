@@ -1,7 +1,7 @@
 from sleekxmpp.test import *
 from sleekxmpp.stanza import Message
 from sleekxmpp.xmlstream.stanzabase import ET, ElementBase
-from sleekxmpp.xmlstream.tostring import tostring, xml_escape
+from sleekxmpp.xmlstream.tostring import tostring, escape
 
 
 class TestToString(SleekTest):
@@ -30,7 +30,7 @@ class TestToString(SleekTest):
     def testXMLEscape(self):
         """Test escaping XML special characters."""
         original = """<foo bar="baz">'Hi & welcome!'</foo>"""
-        escaped = xml_escape(original)
+        escaped = escape(original)
         desired = """&lt;foo bar=&quot;baz&quot;&gt;&apos;Hi"""
         desired += """ &amp; welcome!&apos;&lt;/foo&gt;"""
 
@@ -85,28 +85,17 @@ class TestToString(SleekTest):
             original='<a>foo <b>bar</b> baz</a>',
             message='Element tail content is incorrect.')
 
-
-    def testStanzaNs(self):
-        """
-        Test using the stanza_ns tostring parameter, which will prevent
-        adding an xmlns attribute to the serialized element if the
-        element's namespace is the same.
-        """
-        self.tryTostring(
-            original='<bar xmlns="foo" />',
-            expected='<bar />',
-            message="The stanza_ns parameter was not used properly.",
-            stanza_ns='foo')
-
     def testStanzaStr(self):
         """
         Test that stanza objects are serialized properly.
         """
+        self.stream_start()
+
         utf8_message = '\xe0\xb2\xa0_\xe0\xb2\xa0'
         if not hasattr(utf8_message, 'decode'):
             # Python 3
             utf8_message = bytes(utf8_message, encoding='utf-8')
-        msg = Message()
+        msg = self.Message()
         msg['body'] = utf8_message.decode('utf-8')
         expected = '<message><body>\xe0\xb2\xa0_\xe0\xb2\xa0</body></message>'
         result = msg.__str__()

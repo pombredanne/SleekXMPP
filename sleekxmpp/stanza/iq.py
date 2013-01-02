@@ -6,11 +6,11 @@
     See the file LICENSE for copying permission.
 """
 
-from sleekxmpp.stanza import Error
 from sleekxmpp.stanza.rootstanza import RootStanza
 from sleekxmpp.xmlstream import StanzaBase, ET
 from sleekxmpp.xmlstream.handler import Waiter, Callback
 from sleekxmpp.xmlstream.matcher import MatcherId
+from sleekxmpp.exceptions import IqTimeout, IqError
 
 
 class Iq(RootStanza):
@@ -122,7 +122,7 @@ class Iq(RootStanza):
 
     def get_query(self):
         """Return the namespace of the <query> element."""
-        for child in self.xml.getchildren():
+        for child in self.xml:
             if child.tag.endswith('query'):
                 ns = child.tag.split('}')[0]
                 if '{' in ns:
@@ -132,7 +132,7 @@ class Iq(RootStanza):
 
     def del_query(self):
         """Remove the <query> element."""
-        for child in self.xml.getchildren():
+        for child in self.xml:
             if child.tag.endswith('query'):
                 self.xml.remove(child)
         return self
@@ -154,7 +154,7 @@ class Iq(RootStanza):
         StanzaBase.reply(self, clear)
         return self
 
-    def send(self, block=True, timeout=None, callback=None):
+    def send(self, block=True, timeout=None, callback=None, now=False, timeout_callback=None):
         """
         Send an <iq> stanza over the XML stream.
 
@@ -178,25 +178,60 @@ class Iq(RootStanza):
                         Defaults to sleekxmpp.xmlstream.RESPONSE_TIMEOUT
             callback -- Optional reference to a stream handler function. Will
                         be executed when a reply stanza is received.
+            now      -- Indicates if the send queue should be skipped and send
+                        the stanza immediately. Used during stream
+                        initialization. Defaults to False.
+            timeout_callback -- Optional reference to a stream handler function.
+                        Will be executed when the timeout expires before a 
+                        response has been received with the originally-sent IQ 
+                        stanza.  Only called if there is a callback parameter
+                        (and therefore are in async mode).
         """
         if timeout is None:
             timeout = self.stream.response_timeout
         if callback is not None and self['type'] in ('get', 'set'):
             handler_name = 'IqCallback_%s' % self['id']
-            handler = Callback(handler_name,
-                               MatcherId(self['id']),
-                               callback,
-                               once=True)
+            if timeout_callback:
+                self.callback = callback
+                self.timeout_callback = timeout_callback
+                self.stream.schedule('IqTimeout_%s' % self['id'], 
+                                     timeout, 
+                                     self._fire_timeout, 
+                                     repeat=False)            
+                handler = Callback(handler_name,
+                                   MatcherId(self['id']),
+                                   self._handle_result,
+                                   once=True)
+            else:
+                handler = Callback(handler_name,
+                                   MatcherId(self['id']),
+                                   callback,
+                                   once=True)
             self.stream.register_handler(handler)
-            StanzaBase.send(self)
+            StanzaBase.send(self, now=now)
             return handler_name
         elif block and self['type'] in ('get', 'set'):
             waitfor = Waiter('IqWait_%s' % self['id'], MatcherId(self['id']))
             self.stream.register_handler(waitfor)
-            StanzaBase.send(self)
-            return waitfor.wait(timeout)
+            StanzaBase.send(self, now=now)
+            result = waitfor.wait(timeout)
+            if not result:
+                raise IqTimeout(self)
+            if result['type'] == 'error':
+                raise IqError(result)
+            return result
         else:
-            return StanzaBase.send(self)
+            return StanzaBase.send(self, now=now)
+
+    def _handle_result(self, iq):
+        # we got the IQ, so don't fire the timeout
+        self.stream.scheduler.remove('IqTimeout_%s' % self['id'])
+        self.callback(iq)
+
+    def _fire_timeout(self):
+        # don't fire the handler for the IQ, if it finally does come in
+        self.stream.remove_handler('IqCallback_%s' % self['id'])
+        self.timeout_callback(self)
 
     def _set_stanza_values(self, values):
         """

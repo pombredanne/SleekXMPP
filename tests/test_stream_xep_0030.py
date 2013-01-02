@@ -12,7 +12,6 @@ class TestStreamDisco(SleekTest):
     """
 
     def tearDown(self):
-        sys.excepthook = sys.__excepthook__
         self.stream_close()
 
     def testInfoEmptyDefaultNode(self):
@@ -123,7 +122,7 @@ class TestStreamDisco(SleekTest):
         self.stream_start(mode='client',
                           plugins=['xep_0030'])
 
-        def dynamic_jid(jid, node, iq):
+        def dynamic_jid(jid, node, ifrom, iq):
             result = self.xmpp['xep_0030'].stanza.DiscoInfo()
             result['node'] = node
             result.add_identity('client', 'console', name='Dynamic Info')
@@ -159,7 +158,7 @@ class TestStreamDisco(SleekTest):
                           jid='tester.localhost',
                           plugins=['xep_0030'])
 
-        def dynamic_global(jid, node, iq):
+        def dynamic_global(jid, node, ifrom, iq):
             result = self.xmpp['xep_0030'].stanza.DiscoInfo()
             result['node'] = node
             result.add_identity('component', 'generic', name='Dynamic Info')
@@ -195,7 +194,7 @@ class TestStreamDisco(SleekTest):
         self.stream_start(mode='client',
                           plugins=['xep_0030'])
 
-        def dynamic_jid(jid, node, iq):
+        def dynamic_jid(jid, node, ifrom, iq):
             result = self.xmpp['xep_0030'].stanza.DiscoInfo()
             result['node'] = node
             result.add_identity('client', 'console', name='Dynamic Info')
@@ -237,7 +236,7 @@ class TestStreamDisco(SleekTest):
                           jid='tester.localhost',
                           plugins=['xep_0030'])
 
-        def dynamic_global(jid, node, iq):
+        def dynamic_global(jid, node, ifrom, iq):
             result = self.xmpp['xep_0030'].stanza.DiscoInfo()
             result['node'] = node
             result.add_identity('component', 'generic', name='Dynamic Info')
@@ -326,7 +325,7 @@ class TestStreamDisco(SleekTest):
         self.stream_start(mode='client',
                           plugins=['xep_0030'])
 
-        def dynamic_jid(jid, node, iq):
+        def dynamic_jid(jid, node, ifrom, iq):
             result = self.xmpp['xep_0030'].stanza.DiscoItems()
             result['node'] = node
             result.add_item('tester@localhost', node='foo', name='JID')
@@ -360,7 +359,7 @@ class TestStreamDisco(SleekTest):
                           jid='tester.localhost',
                           plugins=['xep_0030'])
 
-        def dynamic_global(jid, node, iq):
+        def dynamic_global(jid, node, ifrom, iq):
             result = self.xmpp['xep_0030'].stanza.DiscoItems()
             result['node'] = node
             result.add_item('tester@localhost', node='foo', name='Global')
@@ -394,7 +393,7 @@ class TestStreamDisco(SleekTest):
         self.stream_start(mode='client',
                           plugins=['xep_0030'])
 
-        def dynamic_jid(jid, node, iq):
+        def dynamic_jid(jid, node, ifrom, iq):
             result = self.xmpp['xep_0030'].stanza.DiscoItems()
             result['node'] = node
             result.add_item('tester@localhost', node='foo', name='Global')
@@ -436,7 +435,7 @@ class TestStreamDisco(SleekTest):
                           jid='tester.localhost',
                           plugins=['xep_0030'])
 
-        def dynamic_global(jid, node, iq):
+        def dynamic_global(jid, node, ifrom, iq):
             result = self.xmpp['xep_0030'].stanza.DiscoItems()
             result['node'] = node
             result.add_item('tester.localhost', node='foo', name='Global')
@@ -531,11 +530,6 @@ class TestStreamDisco(SleekTest):
 
         raised_exceptions = []
 
-        def catch_exception(*args, **kwargs):
-            raised_exceptions.append(True)
-
-        sys.excepthook = catch_exception
-
         self.stream_start(mode='client',
                           plugins=['xep_0030', 'xep_0059'])
 
@@ -544,8 +538,14 @@ class TestStreamDisco(SleekTest):
                                                   iterator=True)
         results.amount = 10
 
+        def run_test():
+            try:
+                results.next()
+            except StopIteration:
+                raised_exceptions.append(True)
+
         t = threading.Thread(name="get_items_iterator",
-                             target=results.next)
+                             target=run_test)
         t.start()
 
         self.send("""
