@@ -9,7 +9,9 @@
 
     Part of SleekXMPP: The Sleek XMPP Library
 
-    :copyright: (c) 2012 Nathanael C. Fritz, Lance J.T. Stout
+    :copryight: (c) 2004-2013 David Alan Cridland
+    :copyright: (c) 2013 Nathanael C. Fritz, Lance J.T. Stout
+
     :license: MIT, see LICENSE for more details
 """
 
@@ -21,7 +23,8 @@ from base64 import b64encode, b64decode
 
 from sleekxmpp.util import bytes, hash, XOR, quote, num_to_bytes
 from sleekxmpp.util.sasl.client import sasl_mech, Mech, \
-                                       SASLCancelled, SASLFailed
+                                       SASLCancelled, SASLFailed, \
+                                       SASLMutualAuthFailed
 
 
 @sasl_mech(0)
@@ -86,7 +89,7 @@ class EXTERNAL(Mech):
         return self.credentials['authzid']
 
 
-@sasl_mech(30)
+@sasl_mech(31)
 class X_FACEBOOK_PLATFORM(Mech):
 
     name = 'X-FACEBOOK-PLATFORM'
@@ -108,7 +111,7 @@ class X_FACEBOOK_PLATFORM(Mech):
                 b'api_key': self.credentials['api_key']
             }
 
-            resp = '&'.join(['%s=%s' % (k, v) for k, v in resp_data.items()])
+            resp = '&'.join(['%s=%s' % (k.decode("utf-8"), v.decode("utf-8")) for k, v in resp_data.items()])
             return bytes(resp)
         return b''
 
